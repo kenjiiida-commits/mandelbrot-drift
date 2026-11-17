@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Mandelbrot Drift
+Name[ja]=マンデルブロ・ドリフト
+Comment=Mathematical patterns that keep changing smoothly
+Comment[ja]=数学の美しい模様が滑らかに変化し続ける
+Exec=mandelbrot-drift
+Icon=mandelbrot-drift
+Terminal=false
+Categories=Graphics;Education;

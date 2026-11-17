@@ -1,0 +1,7 @@
+# 追加パッケージなしで使える最小の設定
+analyzer:
+  exclude:
+    - test/**
+    - build/**
+    - android/**
+    - web/**

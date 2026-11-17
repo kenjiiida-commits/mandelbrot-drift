@@ -1,0 +1,12 @@
+Package: mandelbrot-drift
+Version: 1.2.0
+Section: graphics
+Priority: optional
+Architecture: all
+Depends: python3, xdg-utils
+Maintainer: 飯田顕治 (kenjiiida-commits) <kenjiiida-commits@users.noreply.github.com>
+Description: マンデルブロ・ドリフト（数学の美しい模様が滑らかに変化し続ける）
+ マンデルブロ集合、ジュリア集合、ニュートン法フラクタル、ボロノイ図、
+ ペンローズ・タイリング、L-system、反応拡散、ストレンジアトラクタ、
+ 黄金角の種の並び、マウラーのバラ、波の干渉、万華鏡の12種類を、
+ パソコンのGPUで描き続けます。
