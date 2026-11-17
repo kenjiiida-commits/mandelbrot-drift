@@ -151,14 +151,16 @@ class _DriftPageState extends State<DriftPage> with SingleTickerProviderStateMix
                   ListTile(
                     title: Text(i == 11
                         ? '万華鏡（${Drift.kNames.length}種類を順番に）'
-                        : (i == 16 ? '宝石の城（${Drift.castleNames.length}種類を順番に）' : patternList[i].name)),
+                        : (i == 16
+                            ? '宝石の城（${Drift.castleNames.length}種類を順番に）'
+                            : (i == 22 ? '没入の旅（${Drift.journeyNames.length}種類を順番に）' : patternList[i].name))),
                     trailing: i == drift.pattern ? const Icon(Icons.check) : null,
                     onTap: () {
                       drift.requestPattern(i);
                       Navigator.pop(ctx);
                     },
                   ),
-                  if (i == 11 || i == 16)
+                  if (i == 11 || i == 16 || i == 22)
                     for (var v = 0; v < Drift.namesFor(i).length; v++)
                       ListTile(
                         dense: true,

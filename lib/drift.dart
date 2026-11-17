@@ -37,6 +37,7 @@ const List<PatternInfo> patternList = [
   PatternInfo('光る洞窟を飛ぶ', 11),
   PatternInfo('夕暮れの大地を飛ぶ', 12),
   PatternInfo('ワープ航行', 13),
+  PatternInfo('没入の旅', 14),
 ];
 
 // ───────────── マンデルブロ集合の行き先（名所）と配色 ─────────────
@@ -217,11 +218,38 @@ class Drift extends ChangeNotifier {
     '透き通った立方体が何枚も重なって見える',
   ];
 
-  /// 種類を持つ模様（万華鏡と宝石の城）の、種類の名前の一覧
-  static List<String> namesFor(int pat) => pat == 16 ? castleNames : kNames;
-  bool get hasVariants => pattern == 11 || pattern == 16;
+  // 没入の旅 10種類
+  static const List<String> journeyNames = [
+    '雲海の上を飛ぶ',
+    '深海へ潜る',
+    '夜の光の森',
+    'ネオンの摩天楼',
+    '小惑星帯を抜ける',
+    'シンセウェイヴの道',
+    '夕暮れの海',
+    '氷の峡谷',
+    '溶岩の洞窟',
+    'オーロラの雪原',
+  ];
+  static const List<String> _journeyDescs = [
+    '朝日に染まる雲の海の上を飛ぶ',
+    '光が届かなくなる深さへ、光る生き物の中を降りていく',
+    '木々の間を、蛍の光をぬって抜ける',
+    '夜の高層ビルの谷間を、窓の灯りの中で飛ぶ',
+    '宇宙に浮かぶ岩の間をすり抜ける',
+    'レトロな夕日と、光の格子の道を疾走する',
+    '波の上すれすれを、夕日に向かって飛ぶ',
+    '青い氷の崖の間を縫って進む',
+    '赤く光る裂け目の間を進む',
+    '夜空いっぱいに揺れるオーロラの下を進む',
+  ];
+  static const List<int> _journeyScapes = [1, 2, 0, 3, 3, 0, 1, 1, 2, 0];
 
-  final Map<int, int> _vStart = {11: 0, 16: 0};
+  /// 種類を持つ模様（万華鏡・宝石の城・没入の旅）の、種類の名前の一覧
+  static List<String> namesFor(int pat) => pat == 16 ? castleNames : (pat == 22 ? journeyNames : kNames);
+  bool get hasVariants => pattern == 11 || pattern == 16 || pattern == 22;
+
+  final Map<int, int> _vStart = {11: 0, 16: 0, 22: 0};
   int _vNext = -1;
   double _kTime = 0; // 種類を切り替えるための時計（「ずっと見る」の間は止まる）
   bool kHold = false; // 同じ種類をずっと見る
@@ -269,7 +297,9 @@ class Drift extends ChangeNotifier {
   void toggleTilt() => tiltOn = !tiltOn;
 
   /// 模様に合う環境音（0=静かな和音 1=風 2=洞窟 3=ワープ）
-  int get scape => pattern == 19 ? 2 : (pattern == 20 ? 1 : (pattern == 21 ? 3 : 0));
+  int get scape => pattern == 22
+      ? _journeyScapes[variant]
+      : (pattern == 19 ? 2 : (pattern == 20 ? 1 : (pattern == 21 ? 3 : 0)));
 
   PatternInfo get info => patternList[pattern];
   int get shaderMode => info.shaderMode;
@@ -325,7 +355,7 @@ class Drift extends ChangeNotifier {
       logS = math.log(kWide);
       _newSeg(true);
     }
-    if (i == 11 || i == 16) {
+    if (i == 11 || i == 16 || i == 22) {
       _kTime = 0;
       if (_vNext >= 0) {
         _vStart[i] = _vNext;
@@ -333,7 +363,7 @@ class Drift extends ChangeNotifier {
       }
     }
     if (i == 16 || i >= 19) {
-      _baseRoll = _roll;
+      _baseRoll = _roll; // 見回す基準を今の持ち方にする
       _basePitch = _pitch;
     }
     cpu[i]?.reset();
@@ -387,7 +417,7 @@ class Drift extends ChangeNotifier {
     lookY += (ty - lookY) * f;
     if (autoCycle && _pending < 0 && !(hasVariants && kHold)) {
       _cycleTime += dt;
-      if (_cycleTime > (pattern == 0 ? 56 : (pattern == 11 ? 150 : (pattern == 16 ? 120 : 45)))) {
+      if (_cycleTime > (pattern == 0 ? 56 : (pattern == 11 ? 150 : (pattern == 16 ? 120 : (pattern == 22 ? 150 : 45))))) {
         requestPattern((pattern + 1) % patternList.length);
       }
     }
@@ -480,6 +510,7 @@ class Drift extends ChangeNotifier {
     }
     if (pattern == 11) return '万華鏡：${kNames[variant]}';
     if (pattern == 16) return variant == 0 ? '宝石の城' : '宝石の城：${castleNames[variant]}';
+    if (pattern == 22) return '没入の旅：${journeyNames[variant]}';
     return info.name;
   }
 
@@ -505,6 +536,8 @@ class Drift extends ChangeNotifier {
         return '6方向に枝を伸ばして育つ（約24秒ごとに新しい結晶）';
       case 15:
         return '薄い膜に光が干渉して、虹色が流れる';
+      case 22:
+        return '${_journeyDescs[variant]}（${variant + 1}/${journeyNames.length}）${kHold ? '・ずっと表示中' : ''}';
       case 19:
         return '曲がりくねった洞窟を、体を傾けながら進む${tiltOn ? '（スマホを傾けると見回せる）' : ''}';
       case 20:

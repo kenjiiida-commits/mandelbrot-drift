@@ -17,7 +17,7 @@ uniform vec3 uB;        // 14-16
 uniform vec3 uC;        // 17-19
 uniform vec3 uD;        // 20-22
 uniform float uTime;    // 23    経過時間（波・ボロノイ・ニュートン法の動き）
-uniform float uVar;     // 24    万華鏡（0〜17）・宝石の城（0〜5）の種類
+uniform float uVar;     // 24    万華鏡（0〜17）・宝石の城（0〜5）・没入の旅（0〜9）の種類
 uniform vec2 uLook;     // 25,26 スマホの傾きで見回す向き
 
 out vec4 fragColor;
@@ -604,6 +604,442 @@ vec3 imWarp(vec2 p) {
   return c;
 }
 
+// ═══════ 没入の旅 10種類（uVar = 種類 0〜9、uLook = 見回す向き） ═══════
+
+vec3 jRay(vec2 p, vec3 fw, float roll) {
+  vec2 uv = rot2(p * 0.5, roll);
+  vec3 rt = normalize(cross(vec3(0.0, 1.0, 0.0), fw));
+  vec3 up = cross(fw, rt);
+  return lookAround(normalize(fw * 1.3 + rt * uv.x + up * uv.y));
+}
+
+// 0. 雲海の上を飛ぶ：朝日に染まる雲の海
+float jCloudH(vec2 x, float oct) { return fbmN(x * 0.12 + vec2(uTime * 0.01, 0.0), oct) * 2.6; }
+
+vec3 j0Clouds(vec2 p) {
+  float t = uTime * 4.0;
+  vec3 ro = vec3(sin(uTime * 0.07) * 8.0, 3.4 + 0.4 * sin(uTime * 0.21), t);
+  vec3 rd = jRay(p, normalize(vec3(0.0, -0.12, 1.0)), 0.18 * sin(uTime * 0.07));
+  vec3 sd = normalize(vec3(0.25, 0.1, 1.0));
+  float s = max(dot(rd, sd), 0.0);
+  vec3 sky = mix(vec3(1.0, 0.62, 0.42), vec3(0.25, 0.4, 0.75), clamp(rd.y * 3.0 + 0.1, 0.0, 1.0));
+  sky += vec3(1.0, 0.85, 0.6) * pow(s, 200.0) * 2.0 + vec3(1.0, 0.6, 0.3) * pow(s, 12.0) * 0.25;
+  if (rd.y > 0.02) return sky;
+  float d = 0.3;
+  bool hit = false;
+  vec3 pos = ro;
+  for (int i = 0; i < 70; i++) {
+    pos = ro + rd * d;
+    float dy = pos.y - jCloudH(pos.xz, 4.0);
+    if (dy < 0.02 * d) { hit = true; break; }
+    d += max(dy * 0.5, 0.03 * d);
+    if (d > 70.0) break;
+  }
+  if (!hit) return sky;
+  vec2 e = vec2(0.15, 0.0);
+  vec3 n = normalize(vec3(jCloudH(pos.xz - e.xy, 5.0) - jCloudH(pos.xz + e.xy, 5.0), 0.3,
+                          jCloudH(pos.xz - e.yx, 5.0) - jCloudH(pos.xz + e.yx, 5.0)));
+  float lit = max(dot(n, sd), 0.0);
+  float hh = jCloudH(pos.xz, 5.0) / 2.6;
+  vec3 c = mix(vec3(0.45, 0.5, 0.7), vec3(1.0, 0.92, 0.85), lit * 0.8 + hh * 0.4);
+  c += vec3(1.0, 0.55, 0.35) * pow(1.0 - abs(dot(n, rd)), 3.0) * 0.5;   // 縁が朝日で光る
+  return mix(c, sky, 1.0 - exp(-d * 0.03));
+}
+
+// 1. 深海へ潜る：光が届かなくなる深さへ、光る生き物の中を降りていく
+vec3 j1Deep(vec2 p) {
+  float depth = fract(uTime / 60.0);                  // 60秒で潜りきって、また水面近くから
+  vec2 uv = rot2(p * 0.5, 0.05 * sin(uTime * 0.2)) + uLook * vec2(-0.3, 0.3);
+  vec3 col = mix(vec3(0.0, 0.25, 0.35), vec3(0.0, 0.01, 0.03), smoothstep(0.0, 0.7, depth));
+  col *= 0.6 + 0.4 * smoothstep(-0.5, 0.5, uv.y);
+  // 上から差し込む光の筋（深くなると消える）
+  float ray = 0.0;
+  for (int i = 0; i < 5; i++) {
+    float fi = float(i);
+    ray += pow(0.5 + 0.5 * sin(uv.x * (6.0 + fi * 3.0) / (1.2 - uv.y) + uTime * 0.2 * (1.0 + fi * 0.3) + fi), 6.0);
+  }
+  col += vec3(0.2, 0.6, 0.6) * ray * 0.12 * (1.0 - smoothstep(0.0, 0.5, depth)) * smoothstep(-0.4, 0.5, uv.y);
+  // 手前へ流れる小さな光の粒（マリンスノーと夜光虫）
+  for (int l = 0; l < 4; l++) {
+    float fl = float(l);
+    float z = fract(fl / 4.0 + uTime * 0.12);
+    vec2 q = uv * mix(9.0, 1.0, z) + vec2(fl * 13.0, uTime * 0.6);
+    vec2 h = hash2(floor(q) + fl * 7.0);
+    float d = length(fract(q) - 0.5 - (h - 0.5) * 0.7);
+    float a = smoothstep(0.0, 0.25, z) * (1.0 - smoothstep(0.8, 1.0, z)) * step(0.45, h.x);
+    float glowOn = mix(0.5, 1.6, smoothstep(0.2, 0.7, depth)) * (0.5 + 0.5 * sin(uTime * 3.0 + h.y * 30.0));
+    vec3 pc = mix(vec3(0.7, 0.85, 0.9), vec3(0.2, 1.0, 0.8), smoothstep(0.3, 0.8, depth));
+    col += pc * (exp(-d * d * 300.0) + 0.006 / (d + 0.02)) * a * glowOn;
+  }
+  // 光るクラゲ
+  for (int k = 0; k < 3; k++) {
+    float fk = float(k);
+    float z = fract(fk / 3.0 + uTime * 0.035);
+    vec2 c = vec2(sin(fk * 2.7 + floor(uTime * 0.035 + fk / 3.0) * 1.9) * 0.6, 0.15 * sin(fk * 4.1)) * (0.2 + z * 1.6);
+    float sz = 0.02 + z * z * 0.35;
+    vec2 d = (uv - c) / sz;
+    float pulse = 1.0 + 0.12 * sin(uTime * 2.5 + fk);
+    float bell = smoothstep(1.0, 0.6, length(d * vec2(1.0, 1.5 * pulse))) * step(-0.1, d.y);
+    float tent = exp(-abs(sin(d.x * 6.0 + d.y * 2.0 + uTime * 2.0)) * 4.0) * step(d.y, 0.0) * smoothstep(-2.2, 0.0, d.y) * step(abs(d.x), 0.8);
+    float a = smoothstep(0.0, 0.2, z) * (1.0 - smoothstep(0.85, 1.0, z)) * smoothstep(0.12, 0.4, depth) * 1.4;
+    vec3 jc = mix(vec3(0.4, 0.5, 1.0), vec3(1.0, 0.4, 0.9), hash(fk + 3.0));
+    col += jc * (bell * 0.9 + tent * 0.35 + exp(-length(d) * 1.5) * 0.25) * a;
+  }
+  return col;
+}
+
+// 2. 夜の光の森：木々の間を、蛍の光をぬって抜ける
+vec2 jForestPath(float z) { return vec2(sin(z * 0.11) * 4.0 + sin(z * 0.05) * 3.0, 1.3 + 0.3 * sin(z * 0.13)); }
+
+float jForestDE(vec3 p, out float glow) {
+  vec2 cell = floor(p.xz / 3.0);
+  float d = p.y + 0.15 * vn2(p.xz * 0.8);   // 地面
+  glow = 1e9;
+  for (int j = 0; j <= 1; j++) {
+    for (int i = 0; i <= 1; i++) {
+      vec2 c = floor((p.xz - 1.5) / 3.0) + vec2(float(i), float(j));
+      vec2 h = hash2(c);
+      vec2 cp = (c + 0.5 + (h - 0.5) * 0.6) * 3.0;
+      float clear = abs(cp.x - jForestPath(cp.y).x);
+      float r = clear < 1.8 ? -1.0 : 0.18 + 0.15 * h.y;
+      if (r > 0.0) d = min(d, length(p.xz - cp) - r);
+      vec3 fly = vec3(cp.x + 0.9 * sin(uTime * 0.7 + h.x * 9.0), 0.8 + 0.6 * sin(uTime * 0.9 + h.y * 7.0), cp.y + 0.9 * cos(uTime * 0.6 + h.y * 5.0));
+      glow = min(glow, length(p - fly));
+    }
+  }
+  return d;
+}
+
+vec3 j2Forest(vec2 p) {
+  float t = uTime * 2.2;
+  vec3 ro = vec3(jForestPath(t).x, jForestPath(t).y, t);
+  vec3 ta = vec3(jForestPath(t + 3.0).x, 1.2, t + 3.0);
+  vec3 rd = jRay(p, normalize(ta - ro), (jForestPath(t + 4.0).x - ro.x) * 0.06);
+  float d = 0.0;
+  float fl = 0.0;
+  bool hit = false;
+  vec3 pos = ro;
+  for (int i = 0; i < 80; i++) {
+    pos = ro + rd * d;
+    float g;
+    float s = jForestDE(pos, g);
+    fl += 0.0025 / (g * g + 0.002) * (0.6 + 0.4 * sin(uTime * 4.0 + pos.z));
+    if (s < 0.003) { hit = true; break; }
+    d += s * 0.8;
+    if (d > 30.0) break;
+  }
+  vec3 fog = vec3(0.05, 0.11, 0.16);
+  vec3 col = fog;
+  if (hit) {
+    vec3 c = pos.y < 0.05 ? vec3(0.04, 0.08, 0.04) : vec3(0.08, 0.06, 0.05) * (0.6 + 0.4 * vn2(vec2(pos.y * 4.0, atan(pos.x, pos.z) * 8.0)));
+    float moon = 0.4 + 0.6 * max(0.0, dot(normalize(vec3(pos.x - ro.x, 0.0, pos.z - ro.z)), vec3(0.0, 0.0, -1.0)));
+    col = mix(fog, c * moon * 4.0 + vec3(0.1, 0.2, 0.25) * 0.15, exp(-d * 0.08));
+  }
+  col += vec3(0.75, 1.0, 0.35) * fl * 0.5;
+  col += vec3(0.25, 0.4, 0.45) * pow(max(0.0, sin(p.x * 2.0 + p.y * 1.2 + 0.5)), 30.0) * 0.08;   // 木々の間から差す月の光
+  col += vec3(0.1, 0.2, 0.25) * smoothstep(0.0, 0.6, rd.y) * 0.4;   // 木々の上の月明かり
+  return col;
+}
+
+// 3. ネオンの摩天楼：夜の高層ビルの谷間を飛ぶ
+float jCityDE(vec3 p, out vec3 cid) {
+  vec2 c = floor(p.xz / 4.0);
+  cid = vec3(c, 0.0);
+  vec2 q = mod(p.xz, 4.0) - 2.0;
+  float h = 3.0 + 12.0 * hs2(c) * hs2(c + 3.1);
+  cid.z = h;
+  vec3 b = vec3(1.3, h, 1.3);
+  vec3 d3 = abs(vec3(q.x, p.y - h * 0.5, q.y)) - vec3(b.x, h * 0.5, b.z);
+  float box = length(max(d3, 0.0)) + min(max(d3.x, max(d3.y, d3.z)), 0.0);
+  return min(box, p.y);
+}
+
+vec3 j3City(vec2 p) {
+  float t = uTime * 6.0;
+  vec3 ro = vec3(4.0 + 0.25 * sin(uTime * 0.4), 3.0 + 1.5 * sin(uTime * 0.13), t);
+  vec3 rd = jRay(p, normalize(vec3(0.15 * sin(uTime * 0.2), -0.05 + 0.08 * sin(uTime * 0.17), 1.0)), 0.12 * sin(uTime * 0.4));
+  float d = 0.0;
+  vec3 cid;
+  bool hit = false;
+  vec3 pos = ro;
+  for (int i = 0; i < 90; i++) {
+    pos = ro + rd * d;
+    float s = jCityDE(pos, cid);
+    if (s < 0.002 * d + 0.001) { hit = true; break; }
+    d += s * 0.9;
+    if (d > 60.0) break;
+  }
+  vec3 sky = mix(vec3(0.15, 0.05, 0.2), vec3(0.01, 0.01, 0.05), clamp(rd.y * 2.0, 0.0, 1.0));
+  vec3 col = sky;
+  if (hit) {
+    if (pos.y < 0.01) {
+      // 道路：明かりが映り込む濡れた路面
+      float lane = smoothstep(0.08, 0.0, abs(mod(pos.x, 4.0) - 2.0)) * step(0.5, fract(pos.z * 0.3));
+      col = vec3(0.02, 0.02, 0.04) + vec3(1.0, 0.8, 0.4) * lane * 0.6 + vec3(0.5, 0.2, 0.8) * 0.15 * vn2(pos.xz);
+    } else {
+      vec2 w = vec2(abs(mod(pos.x, 4.0) - 2.0) > 1.28 ? pos.z : pos.x, pos.y);
+      vec2 wi = floor(w * vec2(3.0, 2.2));
+      vec2 wf = fract(w * vec2(3.0, 2.2));
+      float win = step(0.2, wf.x) * step(wf.x, 0.8) * step(0.25, wf.y) * step(wf.y, 0.75);
+      float lit = step(0.55, hs2(wi + cid.xy * 17.0));
+      vec3 wc = mix(vec3(1.0, 0.8, 0.5), vec3(0.6, 0.85, 1.0), hs2(wi * 1.3 + cid.xy));
+      col = vec3(0.02, 0.02, 0.05) + wc * win * lit * 0.9;
+      float sign_ = smoothstep(0.15, 0.0, abs(pos.y - cid.z * 0.7)) * step(0.6, hs2(cid.xy + 9.0));
+      col += mix(vec3(1.0, 0.1, 0.6), vec3(0.1, 0.9, 1.0), hs2(cid.xy + 5.0)) * sign_ * 2.0;
+    }
+    col = mix(sky * 1.5, col, exp(-d * 0.045));
+  }
+  return col;
+}
+
+// 4. 小惑星帯を抜ける：宇宙に浮かぶ岩の間をすり抜ける
+float jRockDE(vec3 p) {
+  vec3 c = floor(p / 5.0);
+  vec3 q = mod(p, 5.0) - 2.5;
+  float h = hash(dot(c, vec3(1.0, 57.0, 113.0)));
+  if (h < 0.35 || length(c.xy) < 0.6) return length(max(abs(q) - 2.4, 0.0)) + 0.5;   // 進路はあけておく
+  vec3 o = (vec3(hash(h * 7.1), hash(h * 3.3), hash(h * 9.7)) - 0.5) * 2.0;
+  float r = 0.5 + 0.9 * hash(h * 5.5);
+  vec3 lq = q - o;
+  float bump = 0.18 * sin(lq.x * 3.0 + h * 10.0) * sin(lq.y * 3.3) * sin(lq.z * 2.7 + uTime * 0.0);
+  return (length(lq) - r + bump * r) * 0.7;
+}
+
+vec3 j4Asteroids(vec2 p) {
+  float t = uTime * 5.0;
+  vec3 ro = vec3(0.6 * sin(uTime * 0.3), 0.6 * cos(uTime * 0.23), t);
+  vec3 rd = jRay(p, normalize(vec3(0.1 * sin(uTime * 0.17), 0.08 * cos(uTime * 0.13), 1.0)), uTime * 0.08);
+  vec3 sd = normalize(vec3(0.6, 0.4, 0.3));
+  vec3 col = vec3(0.0, 0.0, 0.01);
+  vec2 sp = rd.xy / (rd.z + 1.2) * 40.0;
+  vec2 h = hash2(floor(sp));
+  col += vec3(0.9, 0.95, 1.0) * exp(-dot(fract(sp) - 0.5 - (h - 0.5) * 0.6, fract(sp) - 0.5 - (h - 0.5) * 0.6) * 300.0) * step(0.85, h.x);
+  col += vec3(1.0, 0.8, 0.5) * pow(max(dot(rd, sd), 0.0), 200.0) * 3.0;
+  float d = 0.0;
+  bool hit = false;
+  vec3 pos = ro;
+  for (int i = 0; i < 80; i++) {
+    pos = ro + rd * d;
+    float s = jRockDE(pos);
+    if (s < 0.003) { hit = true; break; }
+    d += s;
+    if (d > 45.0) break;
+  }
+  if (hit) {
+    vec2 e = vec2(0.01, 0.0);
+    vec3 n = normalize(vec3(jRockDE(pos + e.xyy) - jRockDE(pos - e.xyy), jRockDE(pos + e.yxy) - jRockDE(pos - e.yxy), jRockDE(pos + e.yyx) - jRockDE(pos - e.yyx)));
+    float dif = max(dot(n, sd), 0.0);
+    vec3 rock = mix(vec3(0.35, 0.3, 0.28), vec3(0.5, 0.42, 0.35), vn2(pos.xy * 3.0));
+    vec3 c = rock * vec3(1.0, 0.9, 0.75) * (0.12 + 2.4 * dif) + vec3(0.3, 0.45, 0.8) * 0.45 * pow(1.0 - abs(dot(n, rd)), 3.0);
+    col = mix(col, c, exp(-d * 0.04));
+  }
+  return col;
+}
+
+// 5. シンセウェイヴの道：レトロな夕日と光の格子の道を疾走する
+vec3 j5Synth(vec2 p) {
+  vec2 uv = rot2(p * 0.5, 0.06 * sin(uTime * 0.3)) + uLook * vec2(-0.4, 0.4);
+  vec3 col;
+  float hz = -0.02;
+  if (uv.y > hz) {
+    float y = uv.y - hz;
+    col = mix(vec3(0.9, 0.2, 0.5), vec3(0.08, 0.02, 0.2), smoothstep(0.0, 0.45, y));
+    vec2 sc = uv - vec2(0.0, 0.16);
+    float r = length(sc);
+    float stripe = step(0.0, sin((sc.y + 0.2) * 70.0 - uTime * 2.0) + (sc.y + 0.05) * 18.0);
+    float sun = smoothstep(0.205, 0.2, r) * (sc.y > -0.02 ? 1.0 : stripe);
+    col = mix(col, mix(vec3(1.0, 0.3, 0.55), vec3(1.0, 0.9, 0.3), clamp(sc.y * 4.0 + 0.6, 0.0, 1.0)), sun);
+    col += vec3(1.0, 0.3, 0.6) * exp(-r * 6.0) * 0.4;
+    float mtn = 0.05 + 0.06 * fbmN(vec2(uv.x * 4.0 + 10.0, 1.0), 4.0) + 0.02 * abs(sin(uv.x * 9.0));
+    if (y < mtn) col = mix(vec3(0.05, 0.0, 0.12), vec3(0.6, 0.1, 0.9), smoothstep(mtn - 0.004, mtn, y) * 0.8);
+    vec2 st = uv * 60.0;
+    vec2 h = hash2(floor(st));
+    col += vec3(1.0) * step(0.97, h.x) * step(0.2, y) * exp(-length(fract(st) - 0.5) * 8.0);
+  } else {
+    float y = hz - uv.y;
+    float z = 0.12 / y;
+    float x = uv.x * z;
+    float zz = z + uTime * 2.5;
+    float gx = abs(fract(x) - 0.5);
+    float gz = abs(fract(zz) - 0.5);
+    float w = 0.02 * z;
+    float grid = smoothstep(w + 0.02, 0.0, 0.5 - gx) + smoothstep(w + 0.02, 0.0, 0.5 - gz);
+    float road = step(abs(x), 1.2);
+    col = mix(vec3(0.03, 0.0, 0.07), vec3(0.08, 0.0, 0.12), road);
+    col += mix(vec3(1.0, 0.2, 0.8), vec3(0.2, 0.9, 1.0), road) * grid * 1.2;
+    col += vec3(1.0, 0.9, 0.3) * smoothstep(0.06, 0.0, abs(abs(x) - 1.2)) * 0.8;
+    col = mix(col, vec3(0.9, 0.2, 0.5), smoothstep(8.0, 30.0, z) * 0.85);
+  }
+  return col;
+}
+
+// 6. 夕暮れの海：波の上すれすれを、夕日に向かって飛ぶ
+float jWave(vec2 x, float oct) {
+  float h = 0.0;
+  float a = 0.35;
+  vec2 d = vec2(1.0, 0.3);
+  for (int i = 0; i < 6; i++) {
+    if (float(i) >= oct) break;
+    h += a * sin(dot(x, d) * (0.6 + 0.55 * float(i)) + uTime * (1.2 + 0.3 * float(i)));
+    d = rot2(d, 1.1);
+    a *= 0.6;
+  }
+  return h + 0.25 * vn2(x * 0.7 + uTime * 0.2);
+}
+
+vec3 j6Ocean(vec2 p) {
+  float t = uTime * 6.0;
+  vec3 ro = vec3(0.0, 1.6 + 0.2 * sin(uTime * 0.5), t);
+  vec3 rd = jRay(p, normalize(vec3(0.0, -0.08, 1.0)), 0.08 * sin(uTime * 0.25));
+  vec3 sd = normalize(vec3(0.0, 0.07, 1.0));
+  float s = max(dot(rd, sd), 0.0);
+  vec3 sky = mix(vec3(1.0, 0.5, 0.25), vec3(0.2, 0.15, 0.4), clamp(rd.y * 4.0, 0.0, 1.0));
+  sky += vec3(1.0, 0.75, 0.4) * pow(s, 300.0) * 3.0 + vec3(1.0, 0.5, 0.2) * pow(s, 10.0) * 0.5;
+  if (rd.y > 0.0) return sky;
+  float d = (ro.y - 0.5) / max(-rd.y, 1e-3);
+  for (int i = 0; i < 40; i++) {
+    vec3 pos = ro + rd * d;
+    float dy = pos.y - jWave(pos.xz, 4.0);
+    if (abs(dy) < 0.005 * d) break;
+    d += dy * 0.6;
+    if (d > 100.0) break;
+  }
+  vec3 pos = ro + rd * d;
+  vec2 e = vec2(0.05, 0.0);
+  vec3 n = normalize(vec3(jWave(pos.xz - e.xy, 6.0) - jWave(pos.xz + e.xy, 6.0), 0.1, jWave(pos.xz - e.yx, 6.0) - jWave(pos.xz + e.yx, 6.0)));
+  vec3 rr = reflect(rd, n);
+  float fres = pow(1.0 - max(dot(n, -rd), 0.0), 4.0);
+  vec3 refl = mix(vec3(1.0, 0.5, 0.25), vec3(0.2, 0.15, 0.4), clamp(rr.y * 4.0, 0.0, 1.0)) + vec3(1.0, 0.75, 0.4) * pow(max(dot(rr, sd), 0.0), 120.0) * 4.0;
+  vec3 c = mix(vec3(0.02, 0.06, 0.12), refl, 0.15 + 0.85 * fres);
+  return mix(c, sky, 1.0 - exp(-d * 0.02));
+}
+
+// 7. 氷の峡谷：青い氷の崖の間を縫って進む
+float jCanyonX(float z) { return sin(z * 0.08) * 6.0 + sin(z * 0.031) * 9.0; }
+
+float jCanyonH(vec2 x, float oct) {
+  float w = abs(x.x - jCanyonX(x.y));
+  float wall = smoothstep(1.8, 3.6, w) * 12.0;
+  return wall * (0.55 + 0.9 * fbmN(x * vec2(0.35, 0.12), oct)) + fbmN(x * 0.6, 3.0) * 0.5;
+}
+
+vec3 j7Canyon(vec2 p) {
+  float t = uTime * 4.0;
+  vec3 ro = vec3(jCanyonX(t), 2.2 + 0.4 * sin(uTime * 0.3), t);
+  vec3 ta = vec3(jCanyonX(t + 6.0), 1.8, t + 6.0);
+  vec3 rd = jRay(p, normalize(ta - ro), (jCanyonX(t + 8.0) - ro.x) * 0.05);
+  vec3 sky = mix(vec3(0.8, 0.9, 1.0), vec3(0.15, 0.35, 0.8), clamp(rd.y * 2.0, 0.0, 1.0));
+  float d = 0.2;
+  bool hit = false;
+  vec3 pos = ro;
+  for (int i = 0; i < 90; i++) {
+    pos = ro + rd * d;
+    float dy = pos.y - jCanyonH(pos.xz, 4.0);
+    if (dy < 0.01 * d) { hit = true; break; }
+    d += max(dy * 0.35, 0.02 * d);
+    if (d > 60.0) break;
+  }
+  if (!hit) return sky;
+  vec2 e = vec2(0.08, 0.0);
+  vec3 n = normalize(vec3(jCanyonH(pos.xz - e.xy, 5.0) - jCanyonH(pos.xz + e.xy, 5.0), 0.16, jCanyonH(pos.xz - e.yx, 5.0) - jCanyonH(pos.xz + e.yx, 5.0)));
+  vec3 sd = normalize(vec3(-0.4, 0.8, 0.3));
+  float dif = max(dot(n, sd), 0.0);
+  vec3 ice = mix(vec3(0.05, 0.25, 0.55), vec3(0.85, 0.95, 1.0), smoothstep(0.4, 0.95, n.y) * 0.7 + dif * 0.25);
+  ice += vec3(0.2, 0.7, 0.9) * pow(1.0 - abs(dot(n, rd)), 3.0) * 0.4;   // 氷の縁が透けて光る
+  ice *= 0.55 + 0.6 * dif;
+  // 崖の面の模様：氷の層と、ひび割れ
+  float layer = fbmN(vec2(pos.z * 0.15 + pos.x * 0.15, pos.y * 1.6), 4.0);
+  ice *= 0.65 + 0.7 * layer;
+  float crack = smoothstep(0.03, 0.0, abs(fbmN(vec2(pos.z * 0.6 + pos.x * 0.6, pos.y * 0.5), 3.0) - 0.5));
+  ice = mix(ice, vec3(0.02, 0.15, 0.35), crack * 0.7 * (1.0 - smoothstep(0.6, 0.9, n.y)));
+  return mix(ice, sky, 1.0 - exp(-d * 0.03));
+}
+
+// 8. 溶岩の洞窟：赤く光る裂け目の間を進む
+vec3 j8Lava(vec2 p) {
+  float t = uTime * 1.8 + 40.0;
+  vec3 ro = imPath(t);
+  vec3 fw = normalize(imPath(t + 2.0) - ro);
+  vec3 rd = jRay(p, fw, (imPath(t + 3.0).x - ro.x) * 0.25);
+  float d = 0.0;
+  float heat = 0.0;
+  bool hit = false;
+  vec3 pos = ro;
+  for (int i = 0; i < 90; i++) {
+    pos = ro + rd * d;
+    float s = imCaveDE(pos);
+    heat += 0.01 / (1.0 + s * s * 300.0);
+    if (s < 0.002) { hit = true; break; }
+    if (d > 22.0) break;
+    d += s * 0.8;
+  }
+  vec3 bg = vec3(0.05, 0.005, 0.0);
+  vec3 col = bg;
+  if (hit) {
+    vec2 e = vec2(0.002, 0.0);
+    vec3 n = normalize(vec3(imCaveDE(pos + e.xyy) - imCaveDE(pos - e.xyy), imCaveDE(pos + e.yxy) - imCaveDE(pos - e.yxy), imCaveDE(pos + e.yyx) - imCaveDE(pos - e.yyx)));
+    float crack = pow(1.0 - abs(sin(pos.x * 2.3 + vn2(pos.yz * 2.0) * 4.0 + pos.z * 1.1)), 12.0);
+    float lavaFlow = 0.6 + 0.4 * sin(pos.z * 3.0 - uTime * 2.0);
+    vec3 rock = vec3(0.07, 0.04, 0.035) * (0.3 + 0.7 * max(dot(n, -rd), 0.0));
+    vec3 lava = mix(vec3(1.0, 0.25, 0.02), vec3(1.0, 0.85, 0.3), crack) * crack * lavaFlow * 2.0;
+    col = mix(bg, rock + lava + vec3(0.6, 0.12, 0.0) * max(-n.y, 0.0) * 0.25, exp(-d * 0.1));
+  }
+  col += vec3(1.0, 0.35, 0.05) * heat * 0.8;
+  // 舞い上がる火の粉
+  vec2 q = p * vec2(6.0, 3.0) + vec2(0.0, -uTime * 1.5);
+  vec2 h = hash2(floor(q));
+  float ed = length(fract(q) - 0.5 - (h - 0.5) * 0.6);
+  col += vec3(1.0, 0.5, 0.1) * exp(-ed * ed * 500.0) * step(0.8, h.x) * (0.5 + 0.5 * sin(uTime * 6.0 + h.y * 20.0));
+  return col;
+}
+
+// 9. オーロラの雪原：夜空いっぱいに揺れるオーロラの下を進む
+vec3 j9Aurora(vec2 p) {
+  float t = uTime * 3.0;
+  vec3 ro = vec3(0.0, 1.0, t);
+  vec3 rd = jRay(p, normalize(vec3(0.0, 0.18, 1.0)), 0.05 * sin(uTime * 0.2));
+  vec3 col = mix(vec3(0.02, 0.04, 0.1), vec3(0.0, 0.0, 0.02), clamp(rd.y * 2.0, 0.0, 1.0));
+  if (rd.y > 0.0) {
+    vec2 sp = rd.xy / (rd.z + 1.5) * 70.0;
+    vec2 h = hash2(floor(sp));
+    col += vec3(1.0) * step(0.9, h.x) * exp(-length(fract(sp) - 0.5) * 10.0) * (0.6 + 0.4 * sin(uTime * 2.0 + h.y * 40.0));
+    // オーロラの幕：高さを変えて何枚も重ねる
+    vec3 au = vec3(0.0);
+    for (int i = 0; i < 8; i++) {
+      float hgt = 6.0 + float(i) * 0.9;
+      vec2 a = ro.xz + rd.xz * (hgt - ro.y) / rd.y;
+      float band = fbmN(vec2(a.x * 0.06 + uTime * 0.03, a.y * 0.015), 4.0);
+      float curtain = smoothstep(0.35, 0.65, band) * pow(abs(sin(a.x * 0.15 + band * 6.0 + uTime * 0.2)), 2.0);
+      float fade = 1.0 - float(i) / 8.0;
+      au += mix(vec3(0.1, 1.0, 0.45), vec3(0.6, 0.2, 0.9), float(i) / 8.0) * curtain * fade;
+    }
+    col += au * 0.9 * smoothstep(0.0, 0.12, rd.y);
+    return col;
+  }
+  float d = (ro.y - 0.0) / max(-rd.y, 1e-3);
+  vec3 pos = ro + rd * d;
+  float snow = 0.75 + 0.25 * vn2(pos.xz * 0.6) + 0.15 * fbmN(pos.xz * 3.0, 3.0);
+  float glint = step(0.985, hs2(floor(pos.xz * 40.0))) * (0.5 + 0.5 * sin(uTime * 3.0 + pos.x * 10.0));
+  vec3 c = vec3(0.2, 0.32, 0.4) * snow + vec3(0.1, 0.5, 0.3) * 0.18 + vec3(0.8, 1.0, 1.0) * glint * 0.6;
+  return mix(c, vec3(0.05, 0.12, 0.15), 1.0 - exp(-d * 0.04));
+}
+
+vec3 journey(vec2 p) {
+  float v = uVar;
+  vec3 c;
+  if (v < 0.5) c = j0Clouds(p);
+  else if (v < 1.5) c = j1Deep(p);
+  else if (v < 2.5) c = j2Forest(p);
+  else if (v < 3.5) c = j3City(p);
+  else if (v < 4.5) c = j4Asteroids(p);
+  else if (v < 5.5) c = j5Synth(p);
+  else if (v < 6.5) c = j6Ocean(p);
+  else if (v < 7.5) c = j7Canyon(p);
+  else if (v < 8.5) c = j8Lava(p);
+  else c = j9Aurora(p);
+  return c * uJ.y;
+}
+
 // ═══════ 自然の光と立体の模様（万華鏡の部品 kfold・rot2・hash2・fbm・jewel を使う） ═══════
 
 // ── 水の底でゆらめく光：水面で曲がった光が、底に網目の模様を作る ──
@@ -945,7 +1381,7 @@ void main() {
   vec2 pos = uCenter + p * uScale;
 
   // 0,1=マンデルブロ・ジュリア 2=ニュートン法 3=波の干渉 4=ボロノイ図 5=万華鏡
-  // 6=水の底の光 7=星雲 8=雪の結晶 9=シャボン玉 10=宝石の城 11=洞窟 12=大地 13=ワープ
+  // 6=水の底の光 7=星雲 8=雪の結晶 9=シャボン玉 10=宝石の城 11=洞窟 12=大地 13=ワープ 14=没入の旅
   vec3 col;
   if (uMode < 1.5) col = escapeTime(pos);
   else if (uMode < 2.5) col = newton(pos);
@@ -959,6 +1395,7 @@ void main() {
   else if (uMode < 10.5) col = crystal(pos, uVar) * uJ.y;
   else if (uMode < 11.5) col = imCave(pos);
   else if (uMode < 12.5) col = imLand(pos);
-  else col = imWarp(pos);
+  else if (uMode < 13.5) col = imWarp(pos);
+  else col = journey(pos);
   fragColor = vec4(pow(clamp(col, 0.0, 1.0), vec3(0.95)), 1.0);
 }
