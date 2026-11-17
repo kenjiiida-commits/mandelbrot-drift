@@ -17,7 +17,7 @@ uniform vec3 uB;        // 14-16
 uniform vec3 uC;        // 17-19
 uniform vec3 uD;        // 20-22
 uniform float uTime;    // 23    経過時間（波・ボロノイ・ニュートン法の動き）
-uniform float uVar;     // 24    万華鏡の種類（0〜17）
+uniform float uVar;     // 24    万華鏡（0〜17）・宝石の城（0〜5）の種類
 
 out vec4 fragColor;
 
@@ -638,42 +638,106 @@ float cityDE(vec3 p) {
   return sponge(q / 0.62) * 0.62;
 }
 
-vec3 crystal(vec2 p) {
-  float t = uTime * 0.5;
+// mode 0=宝石の城 1=キリモミ飛行 2=色の波 3=ネオンの街 4=黄金の城 5=水晶の城
+vec3 cityNormal(vec3 pos) {
+  vec2 e = vec2(0.0015, 0.0);
+  return normalize(vec3(cityDE(pos + e.xyy) - cityDE(pos - e.xyy),
+                        cityDE(pos + e.yxy) - cityDE(pos - e.yxy),
+                        cityDE(pos + e.yyx) - cityDE(pos - e.yyx)));
+}
+
+vec3 rainbow(float h) {
+  return 0.5 + 0.5 * cos(6.2831853 * (h + vec3(0.0, 0.33, 0.67)));
+}
+
+vec3 crystal(vec2 p, float mode) {
+  bool roll = mode > 0.5 && mode < 1.5;
+  float t = uTime * (roll ? 0.8 : 0.5);
   vec3 ro = vec3(1.0 + 0.18 * sin(t * 0.37), 1.0 + 0.18 * cos(t * 0.29), t);
+  if (roll) ro.xy = vec2(1.0) + 0.28 * vec2(cos(t * 0.9), sin(t * 0.9));   // らせんを描いて進む
   vec3 rd = normalize(vec3(p, 1.5));
-  rd.xy = rot2(rd.xy, t * 0.1);
+  rd.xy = rot2(rd.xy, roll ? t * 1.1 + 0.6 * sin(t * 0.3) : t * 0.1);     // キリモミでは機体ごと回る
   rd.xz = rot2(rd.xz, 0.25 * sin(t * 0.21));
   rd.yz = rot2(rd.yz, 0.2 * sin(t * 0.17));
+
+  vec3 fogCol = mode > 3.5 && mode < 4.5 ? vec3(0.06, 0.03, 0.01)
+              : (mode > 2.5 && mode < 3.5 ? vec3(0.0, 0.0, 0.02) : vec3(0.01, 0.03, 0.09));
+  float L = 14.0;
+
+  // 水晶の城：当たっても止まらず、立方体を通り抜けながら色を重ねる
+  if (mode > 4.5) {
+    float dist = 0.0;
+    float trans = 1.0;
+    vec3 acc = vec3(0.0);
+    bool inside = false;
+    for (int i = 0; i < 140; i++) {
+      vec3 pos = ro + rd * dist;
+      float d = cityDE(pos);
+      if (!inside) {
+        if (d < 0.0015 * dist + 0.0005) {
+          vec3 n = cityNormal(pos);
+          vec3 cell = floor((pos + 1.0) / 2.0);
+          vec3 c = jewel(hash(dot(cell, vec3(1.7, 3.1, 5.3))) * 0.6 + 0.2 + uShift * 0.2);
+          float fres = pow(1.0 - abs(dot(n, rd)), 2.0);
+          float spec = pow(max(dot(reflect(rd, n), normalize(vec3(0.4, 0.7, -0.5))), 0.0), 30.0);
+          acc += trans * exp(-dist * 0.12) * (c * (0.12 + 0.6 * fres) + vec3(0.9, 1.0, 1.0) * spec * 0.6);
+          trans *= 0.68;
+          inside = true;
+          dist += 0.004;
+        } else {
+          dist += d * 0.9;
+        }
+      } else {
+        if (d > 0.0) { inside = false; dist += 0.004; }
+        else dist += max(-d * 0.9, 0.004);
+      }
+      if (dist > L || trans < 0.04) break;
+    }
+    return acc + trans * fogCol;
+  }
+
   float dist = 0.0;
   float steps = 0.0;
+  float glow = 0.0;
   bool hit = false;
   for (int i = 0; i < 90; i++) {
     float d = cityDE(ro + rd * dist);
+    glow += 1.0 / (1.0 + d * d * 6000.0);
     if (d < 0.0012 * dist) { hit = true; break; }
     dist += d * 0.9;
     steps += 1.0;
-    if (dist > 14.0) break;
+    if (dist > L) break;
   }
-  vec3 fogCol = vec3(0.01, 0.03, 0.09);
   vec3 col = fogCol;
   if (hit) {
     vec3 pos = ro + rd * dist;
-    vec2 e = vec2(0.0015, 0.0);
-    vec3 n = normalize(vec3(cityDE(pos + e.xyy) - cityDE(pos - e.xyy),
-                            cityDE(pos + e.yxy) - cityDE(pos - e.yxy),
-                            cityDE(pos + e.yyx) - cityDE(pos - e.yyx)));
+    vec3 n = cityNormal(pos);
     vec3 cell = floor((pos + 1.0) / 2.0);
-    vec3 base = jewel(hash(dot(cell, vec3(1.7, 3.1, 5.3))) + uShift * 0.2);
-    vec3 L = normalize(vec3(0.4, 0.7, -0.5));
-    float dif = max(dot(n, L), 0.0);
-    float spec = pow(max(dot(reflect(rd, n), L), 0.0), 40.0);
+    float h = hash(dot(cell, vec3(1.7, 3.1, 5.3)));
+    vec3 base;
+    if (mode > 1.5 && mode < 2.5) base = rainbow(h * 0.25 + uTime * 0.12 + dot(cell, vec3(0.13, 0.07, 0.21)));  // 色の波
+    else if (mode > 3.5) base = mix(vec3(1.0, 0.72, 0.28), vec3(1.0, 0.85, 0.55), h);                     // 黄金
+    else base = jewel(h + uShift * 0.2);
+    vec3 Ld = normalize(vec3(0.4, 0.7, -0.5));
+    float dif = max(dot(n, Ld), 0.0);
+    float spec = pow(max(dot(reflect(rd, n), Ld), 0.0), mode > 3.5 ? 18.0 : 40.0);
     float ao = 1.0 - steps / 90.0;
-    col = base * (0.15 + 0.85 * dif) * ao * 1.4 + vec3(0.9, 1.0, 1.0) * spec * 0.8;
-    col += base * pow(1.0 - abs(dot(n, rd)), 3.0) * 0.6;
+    float fres = pow(1.0 - abs(dot(n, rd)), 3.0);
+    if (mode > 2.5 && mode < 3.5) {
+      col = base * (0.05 + 0.1 * dif) * ao;                                          // ネオン：面は暗く
+    } else if (mode > 3.5) {
+      vec3 env = mix(vec3(0.15, 0.08, 0.02), vec3(1.0, 0.9, 0.7), clamp(reflect(rd, n).y * 0.5 + 0.5, 0.0, 1.0));
+      col = base * (0.3 + 0.95 * dif) * ao * 1.25 + env * base * fres * 1.5 + vec3(1.0, 0.97, 0.85) * spec * 1.6;
+    } else {
+      col = base * (0.15 + 0.85 * dif) * ao * 1.4 + vec3(0.9, 1.0, 1.0) * spec * 0.8 + base * fres * 0.6;
+    }
     col = mix(fogCol, col, exp(-dist * 0.18));
   }
-  col += vec3(0.1, 0.35, 0.6) * (steps / 90.0) * 0.35;  // 縁のほのかな光
+  if (mode > 2.5 && mode < 3.5) {
+    col += rainbow(dist * 0.08 + uTime * 0.05 + uShift) * glow * 0.045;            // 縁をかすめた光がネオンになる
+  } else {
+    col += vec3(0.1, 0.35, 0.6) * (steps / 90.0) * 0.35;
+  }
   return col;
 }
 
@@ -747,6 +811,6 @@ void main() {
   else if (uMode < 7.5) col = nebula(pos);
   else if (uMode < 8.5) col = snowflake(pos);
   else if (uMode < 9.5) col = soap(pos);
-  else col = crystal(pos);
+  else col = crystal(pos, uVar) * uJ.y;
   fragColor = vec4(pow(clamp(col, 0.0, 1.0), vec3(0.95)), 1.0);
 }

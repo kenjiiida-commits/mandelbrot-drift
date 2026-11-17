@@ -196,12 +196,36 @@ class Drift extends ChangeNotifier {
     '幾重もの花びらが呼吸する',
   ];
   static const List<int> _kSegs = [8, 6, 8, 8, 6, 8, 10, 6, 7, 6, 6, 8, 6, 6, 8, 12, 6, 8];
-  int _kStart = 0;
-  int _kNext = -1;
-  double _kTime = 0; // 万華鏡を切り替えるための時計（「ずっと見る」の間は止まる）
-  bool kHold = false; // 同じ万華鏡をずっと見る
-  int get kaleidoVar => (_kStart + (_kTime / 30).floor()) % kNames.length;
-  double get kaleidoSegs => _kSegs[kaleidoVar].toDouble();
+  // 宝石の城 6種類（万華鏡と同じく、30秒ごとに切り替え・ずっと見る・メニューから選べる）
+  static const List<String> castleNames = [
+    '宝石の城（基本）',
+    'キリモミ飛行',
+    '色の波',
+    'ネオンの街',
+    '黄金の城',
+    '水晶の城',
+  ];
+  static const List<String> _castleDescs = [
+    'メンガーのスポンジが並ぶ街を飛び抜ける',
+    'くるくると回転しながら、らせんを描いて突き進む',
+    '立方体の色が、波のように次々と移り変わる',
+    '暗い街の立方体の縁が、ネオンのように光る',
+    '金色に輝く立方体が光を照り返す',
+    '透き通った立方体が何枚も重なって見える',
+  ];
+
+  /// 種類を持つ模様（万華鏡と宝石の城）の、種類の名前の一覧
+  static List<String> namesFor(int pat) => pat == 16 ? castleNames : kNames;
+  bool get hasVariants => pattern == 11 || pattern == 16;
+
+  final Map<int, int> _vStart = {11: 0, 16: 0};
+  int _vNext = -1;
+  double _kTime = 0; // 種類を切り替えるための時計（「ずっと見る」の間は止まる）
+  bool kHold = false; // 同じ種類をずっと見る
+  int get variant =>
+      hasVariants ? ((_vStart[pattern] ?? 0) + (_kTime / 30).floor()) % namesFor(pattern).length : 0;
+  int get kaleidoVar => variant;
+  double get kaleidoSegs => pattern == 11 ? _kSegs[variant].toDouble() : 6.0;
   double get kaleidoDim {
     final fadeIn = math.min(1.0, ptime / 5);
     if (kHold) return fadeIn;
@@ -212,9 +236,12 @@ class Drift extends ChangeNotifier {
   void toggleHold() => kHold = !kHold;
 
   /// メニューで選んだ種類の万華鏡から始める
-  void requestKaleido(int v) {
-    _kNext = v;
-    _pending = 11;
+  void requestKaleido(int v) => requestVariant(11, v);
+
+  /// メニューで選んだ種類から始める（万華鏡＝11、宝石の城＝16）
+  void requestVariant(int pat, int v) {
+    _vNext = v;
+    _pending = pat;
   }
 
   PatternInfo get info => patternList[pattern];
@@ -271,11 +298,11 @@ class Drift extends ChangeNotifier {
       logS = math.log(kWide);
       _newSeg(true);
     }
-    if (i == 11) {
+    if (i == 11 || i == 16) {
       _kTime = 0;
-      if (_kNext >= 0) {
-        _kStart = _kNext;
-        _kNext = -1;
+      if (_vNext >= 0) {
+        _vStart[i] = _vNext;
+        _vNext = -1;
       }
     }
     cpu[i]?.reset();
@@ -314,10 +341,10 @@ class Drift extends ChangeNotifier {
     rot += dt * 0.025;
     shift += dt * 0.035;
 
-    if (pattern == 11 && !kHold) _kTime += dt;
-    if (autoCycle && _pending < 0 && !(pattern == 11 && kHold)) {
+    if (hasVariants && !kHold) _kTime += dt;
+    if (autoCycle && _pending < 0 && !(hasVariants && kHold)) {
       _cycleTime += dt;
-      if (_cycleTime > (pattern == 0 ? 56 : (pattern == 11 ? 150 : 45))) {
+      if (_cycleTime > (pattern == 0 ? 56 : (pattern == 11 ? 150 : (pattern == 16 ? 120 : 45)))) {
         requestPattern((pattern + 1) % patternList.length);
       }
     }
@@ -408,7 +435,8 @@ class Drift extends ChangeNotifier {
       if (!auto) return '自由探索';
       return seg.zoomIn ? targets[tIdx].name : '→ ${targets[tIdx].name}';
     }
-    if (pattern == 11) return '万華鏡：${kNames[kaleidoVar]}';
+    if (pattern == 11) return '万華鏡：${kNames[variant]}';
+    if (pattern == 16) return variant == 0 ? '宝石の城' : '宝石の城：${castleNames[variant]}';
     return info.name;
   }
 
@@ -435,7 +463,7 @@ class Drift extends ChangeNotifier {
       case 15:
         return '薄い膜に光が干渉して、虹色が流れる';
       case 16:
-        return 'メンガーのスポンジが並ぶ街を飛び抜ける';
+        return '${_castleDescs[variant]}（${variant + 1}/${castleNames.length}）${kHold ? '・ずっと表示中' : ''}';
       case 11:
         return '${_kDescs[kaleidoVar]}（${kaleidoVar + 1}/${kNames.length}）${kHold ? '・ずっと表示中' : ''}';
       default:

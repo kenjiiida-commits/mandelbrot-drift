@@ -117,24 +117,26 @@ class _DriftPageState extends State<DriftPage> with SingleTickerProviderStateMix
                 const Divider(height: 1),
                 for (var i = 0; i < patternList.length; i++) ...[
                   ListTile(
-                    title: Text(i == 11 ? '万華鏡（${Drift.kNames.length}種類を順番に）' : patternList[i].name),
+                    title: Text(i == 11
+                        ? '万華鏡（${Drift.kNames.length}種類を順番に）'
+                        : (i == 16 ? '宝石の城（${Drift.castleNames.length}種類を順番に）' : patternList[i].name)),
                     trailing: i == drift.pattern ? const Icon(Icons.check) : null,
                     onTap: () {
                       drift.requestPattern(i);
                       Navigator.pop(ctx);
                     },
                   ),
-                  if (i == 11)
-                    for (var v = 0; v < Drift.kNames.length; v++)
+                  if (i == 11 || i == 16)
+                    for (var v = 0; v < Drift.namesFor(i).length; v++)
                       ListTile(
                         dense: true,
                         contentPadding: const EdgeInsets.only(left: 40, right: 16),
-                        title: Text('・${Drift.kNames[v]}'),
-                        trailing: (drift.pattern == 11 && drift.kaleidoVar == v)
+                        title: Text('・${Drift.namesFor(i)[v]}'),
+                        trailing: (drift.pattern == i && drift.variant == v)
                             ? const Icon(Icons.check, size: 18)
                             : null,
                         onTap: () {
-                          drift.requestKaleido(v);
+                          drift.requestVariant(i, v);
                           Navigator.pop(ctx);
                         },
                       ),
@@ -236,7 +238,7 @@ class _DriftPageState extends State<DriftPage> with SingleTickerProviderStateMix
                     }),
                     _btn(!drift.auto ? '自動再開' : (drift.playing ? '一時停止' : '再生'),
                         () => drift.playButton()),
-                    if (drift.pattern == 11)
+                    if (drift.hasVariants)
                       _btn(drift.kHold ? 'ずっと見る：オン' : 'ずっと見る', () => drift.toggleHold()),
                   ],
                 ),
@@ -308,7 +310,7 @@ class FractalPainter extends CustomPainter {
     f(h.toDouble());
     f(drift.cx);
     f(drift.cy);
-    if (drift.pattern == 11) {
+    if (drift.hasVariants) {
       f(drift.kaleidoSegs); // 万華鏡では「鏡の数」と「明るさ」を渡す
       f(drift.kaleidoDim);
     } else {
