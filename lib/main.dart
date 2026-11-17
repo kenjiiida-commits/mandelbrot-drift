@@ -153,14 +153,16 @@ class _DriftPageState extends State<DriftPage> with SingleTickerProviderStateMix
                         ? '万華鏡（${Drift.kNames.length}種類を順番に）'
                         : (i == 16
                             ? '宝石の城（${Drift.castleNames.length}種類を順番に）'
-                            : (i == 22 ? '没入の旅（${Drift.journeyNames.length}種類を順番に）' : patternList[i].name))),
+                            : (i == 22
+                                ? '没入の旅（${Drift.journeyNames.length}種類を順番に）'
+                                : (i == 23 ? '極彩色の渦（${Drift.psyNames.length}種類を順番に）' : patternList[i].name)))),
                     trailing: i == drift.pattern ? const Icon(Icons.check) : null,
                     onTap: () {
                       drift.requestPattern(i);
                       Navigator.pop(ctx);
                     },
                   ),
-                  if (i == 11 || i == 16 || i == 22)
+                  if (i == 11 || i == 16 || i == 22 || i == 23)
                     for (var v = 0; v < Drift.namesFor(i).length; v++)
                       ListTile(
                         dense: true,
@@ -353,7 +355,7 @@ class FractalPainter extends CustomPainter {
       f(kJuliaR * math.sin(drift.jAngle));
     }
     f(drift.scale);
-    f(drift.pattern >= 19 ? 0.0 : drift.rot); // 3Dの景色は画面を回さない
+    f(drift.pattern >= 19 && drift.pattern <= 22 ? 0.0 : drift.rot); // 3Dの景色は画面を回さない
     f(drift.shift);
     f(drift.iterations);
     f(drift.shaderMode.toDouble());
@@ -364,6 +366,9 @@ class FractalPainter extends CustomPainter {
     f(drift.kaleidoVar.toDouble());
     f(drift.lookX);
     f(drift.lookY);
+    for (final v in drift.psyUniforms) {
+      f(v);
+    }
 
     final recorder = ui.PictureRecorder();
     Canvas(recorder).drawRect(

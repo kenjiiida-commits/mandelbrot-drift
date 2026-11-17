@@ -19,6 +19,8 @@ uniform vec3 uD;        // 20-22
 uniform float uTime;    // 23    経過時間（波・ボロノイ・ニュートン法の動き）
 uniform float uVar;     // 24    万華鏡（0〜17）・宝石の城（0〜5）・没入の旅（0〜9）の種類
 uniform vec2 uLook;     // 25,26 スマホの傾きで見回す向き
+uniform vec4 uP1;       // 27-30 極彩色の渦の設定（色相・色の速さ・渦の数・大きな渦の割合）
+uniform vec4 uP2;       // 31-34 極彩色の渦の設定（ねじれ・縞・鏡の数・塗り方）
 
 out vec4 fragColor;
 
@@ -459,6 +461,77 @@ vec3 kaleido(vec2 p) {
   else if (v < 16.5) c = k8Shards(p);
   else c = k9Mandala(p);
   return c * uJ.y;
+}
+
+// ═══════ 極彩色の渦（20種類の違いは uP1・uP2 の8つの数で決める） ═══════
+// uP1 = (色相, 色相の移り変わる速さ, 渦の数, 大きな渦の割合)
+// uP2 = (渦のねじれの強さ, 縞の細かさ, 鏡で折り返す数（0=なし）, 塗り方)
+// 塗り方：0=補色 1=三原色 2=黒地にネオン 3=反転 4=虹
+
+vec3 hsv2rgb(vec3 c) {
+  vec3 k = clamp(abs(mod(c.x * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+  return c.z * mix(vec3(1.0), k, c.y);
+}
+
+vec3 psy(vec2 p) {
+  vec2 q = uP2.z > 0.5 ? kfold(p, uP2.z) : p;
+  q *= 1.4;
+  float t = uTime;
+  // 大小の渦が、ばらばらの時間と場所で生まれては消える
+  for (int i = 0; i < 8; i++) {
+    float fi = float(i);
+    if (fi >= uP1.z) break;
+    float period = 6.0 + 9.0 * hash(fi * 3.7 + 1.0);
+    float ph = t / period + hash(fi * 5.1);
+    float cyc = floor(ph);
+    float life = sin(3.14159265 * fract(ph));
+    vec2 hc = hash2(vec2(fi, cyc) * 1.37 + 0.5);
+    vec2 c = (hc - 0.5) * vec2(2.4, 3.2);
+    float big = step(hash(fi * 7.3 + cyc * 1.9), uP1.w);
+    float r = mix(0.12 + 0.12 * hc.x, 0.5 + 0.45 * hc.y, big);
+    float dir = hash(fi * 11.0 + cyc) < 0.5 ? -1.0 : 1.0;
+    vec2 d = q - c;
+    float fall = exp(-dot(d, d) / (r * r));
+    float ang = dir * uP2.x * life * fall * (1.0 + 2.0 * (1.0 - big));   // 小さな渦ほど速く回る
+    q = c + rot2(d, ang);
+  }
+  // 流れるガラス：領域を2重にゆがめる
+  float tt = t * 0.12;
+  vec2 a = vec2(fbm(q + vec2(0.0, tt)), fbm(q + vec2(5.2, 1.3 - tt)));
+  vec2 b = vec2(fbm(q + 3.0 * a + vec2(1.7, 9.2) + tt), fbm(q + 3.0 * a + vec2(8.3, 2.8) - tt));
+  float v = fbm(q + 2.5 * b);
+  float hue = uP1.x + uP1.y * t;
+  float band = v * uP2.y + length(b) * 1.5 - t * 0.15;
+  float s = 0.5 + 0.5 * cos(6.2831853 * band);
+  float sharp = smoothstep(0.35, 0.65, s);
+  float edge = 1.0 - abs(s - 0.5) * 2.0;
+  float m = uP2.w;
+  vec3 col;
+  if (m < 0.5) {
+    vec3 A = hsv2rgb(vec3(hue, 0.95, 1.0));
+    vec3 B = hsv2rgb(vec3(hue + 0.5, 0.95, 1.0));
+    col = mix(A, B, sharp) * (0.55 + 0.6 * v) + vec3(1.0) * pow(edge, 12.0) * 0.6;
+  } else if (m < 1.5) {
+    float k = fract(band);
+    float h = hue + floor(k * 3.0) / 3.0;
+    col = hsv2rgb(vec3(h, 0.95, 0.6 + 0.6 * v));
+    col += hsv2rgb(vec3(h + 0.5, 1.0, 1.0)) * pow(abs(fract(k * 3.0) - 0.5) * 2.0, 16.0) * 0.8;
+  } else if (m < 2.5) {
+    float line = pow(edge, 6.0);
+    vec3 A = hsv2rgb(vec3(hue, 1.0, 1.0));
+    vec3 B = hsv2rgb(vec3(hue + 0.5, 1.0, 1.0));
+    col = mix(A, B, step(0.5, fract(band * 0.5))) * line * 1.5 + vec3(1.0) * pow(edge, 40.0) * 0.6
+        + mix(A, B, v) * 0.1 * v;
+  } else if (m < 3.5) {
+    vec3 A = hsv2rgb(vec3(hue + v * 0.6, 1.0, 1.0));
+    col = abs(sin(A * 3.14159265 * (1.0 + 2.0 * s)));
+    col = mix(col, 1.0 - col, sharp);
+  } else {
+    float h = hue + band * 0.25;
+    col = hsv2rgb(vec3(h, 1.0, 0.55 + 0.6 * v));
+    col = mix(col, hsv2rgb(vec3(h + 0.5, 1.0, 1.0)), pow(edge, 10.0) * 0.8);
+  }
+  return col * uJ.y;
 }
 
 // ═══════ 没入感のある3つの景色（uLook = スマホの傾きで見回す向き） ═══════
@@ -1381,7 +1454,7 @@ void main() {
   vec2 pos = uCenter + p * uScale;
 
   // 0,1=マンデルブロ・ジュリア 2=ニュートン法 3=波の干渉 4=ボロノイ図 5=万華鏡
-  // 6=水の底の光 7=星雲 8=雪の結晶 9=シャボン玉 10=宝石の城 11=洞窟 12=大地 13=ワープ 14=没入の旅
+  // 6=水の底の光 7=星雲 8=雪の結晶 9=シャボン玉 10=宝石の城 11=洞窟 12=大地 13=ワープ 14=没入の旅 15=極彩色の渦
   vec3 col;
   if (uMode < 1.5) col = escapeTime(pos);
   else if (uMode < 2.5) col = newton(pos);
@@ -1396,6 +1469,7 @@ void main() {
   else if (uMode < 11.5) col = imCave(pos);
   else if (uMode < 12.5) col = imLand(pos);
   else if (uMode < 13.5) col = imWarp(pos);
-  else col = journey(pos);
+  else if (uMode < 14.5) col = journey(pos);
+  else col = psy(pos);
   fragColor = vec4(pow(clamp(col, 0.0, 1.0), vec3(0.95)), 1.0);
 }

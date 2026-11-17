@@ -38,6 +38,7 @@ const List<PatternInfo> patternList = [
   PatternInfo('夕暮れの大地を飛ぶ', 12),
   PatternInfo('ワープ航行', 13),
   PatternInfo('没入の旅', 14),
+  PatternInfo('極彩色の渦', 15),
 ];
 
 // ───────────── マンデルブロ集合の行き先（名所）と配色 ─────────────
@@ -245,11 +246,83 @@ class Drift extends ChangeNotifier {
   ];
   static const List<int> _journeyScapes = [1, 2, 0, 3, 3, 0, 1, 1, 2, 0];
 
-  /// 種類を持つ模様（万華鏡・宝石の城・没入の旅）の、種類の名前の一覧
-  static List<String> namesFor(int pat) => pat == 16 ? castleNames : (pat == 22 ? journeyNames : kNames);
-  bool get hasVariants => pattern == 11 || pattern == 16 || pattern == 22;
+  // 極彩色の渦 20種類（設定：色相・色の速さ・渦の数・大きな渦の割合・ねじれ・縞・鏡の数・塗り方）
+  static const List<String> psyNames = [
+    'ルビーとアクアマリン',
+    'サファイアと琥珀',
+    '紫水晶とペリドット',
+    '桃色と翡翠',
+    '補色の万華鏡',
+    'ネオンの渦潮',
+    '三原色の大渦',
+    '小さな渦の群れ',
+    '縞模様の嵐',
+    '溶けた虹',
+    '鏡の渦',
+    'ネオンの流体',
+    '反転する夢',
+    '炎と氷',
+    '森の幻',
+    '万華鏡の嵐',
+    '夕陽と海',
+    '宇宙の染料',
+    '極彩色の洪水',
+    '静かな大渦',
+  ];
+  static const List<String> _psyDescs = [
+    '赤と青緑が、ぶつかり合いながら渦を巻く',
+    '青と橙が、流れの中で入れ替わる',
+    '紫と黄緑の縞が、大小の渦にねじれる',
+    '桃色と翡翠色が、やわらかく溶け合う',
+    '補色の渦を、6方向の鏡で折り返す',
+    '黒い海に、補色のネオンの線が渦巻く',
+    '三つの色が、大きな渦に巻き込まれる',
+    '小さな渦が、あちこちで生まれては消える',
+    '細かな補色の縞が、嵐のようにねじれる',
+    '虹の色が溶けて流れ、境目に補色が光る',
+    '虹の渦を、8方向の鏡で折り返す',
+    '暗闇を、光る線の流れが埋め尽くす',
+    '色が裏返りながら、ゆがんでいく',
+    '橙の炎と青い氷が、せめぎ合う',
+    '緑と紫と橙が、幻のように混ざる',
+    '小さな渦の嵐を、12方向の鏡で折り返す',
+    '夕陽の赤と海の青が、大きくうねる',
+    '星雲のような光の線を、鏡で折り返す',
+    'すべての色が、激しく渦を巻いてあふれる',
+    '大きな渦が、ゆっくりと補色を混ぜる',
+  ];
+  static const List<List<double>> _psyParams = [
+    [0.98, 0.0, 6.0, 0.4, 4.0, 3.0, 0.0, 0.0],
+    [0.6, 0.0, 6.0, 0.5, 4.5, 3.5, 0.0, 0.0],
+    [0.78, 0.0, 7.0, 0.4, 5.0, 4.0, 0.0, 0.0],
+    [0.92, 0.0, 6.0, 0.6, 3.5, 2.5, 0.0, 0.0],
+    [0.85, 0.01, 6.0, 0.5, 4.0, 3.0, 6.0, 0.0],
+    [0.55, 0.008, 7.0, 0.5, 5.0, 3.0, 0.0, 2.0],
+    [0.0, 0.01, 4.0, 0.9, 6.0, 2.0, 0.0, 1.0],
+    [0.3, 0.008, 8.0, 0.05, 6.0, 3.0, 0.0, 0.0],
+    [0.12, 0.01, 7.0, 0.4, 5.0, 7.0, 0.0, 0.0],
+    [0.0, 0.02, 5.0, 0.6, 3.0, 2.0, 0.0, 4.0],
+    [0.65, 0.006, 6.0, 0.4, 5.0, 4.0, 8.0, 4.0],
+    [0.9, 0.012, 6.0, 0.3, 4.0, 5.0, 0.0, 2.0],
+    [0.4, 0.01, 6.0, 0.5, 4.0, 2.5, 0.0, 3.0],
+    [0.07, 0.0, 6.0, 0.5, 5.0, 3.5, 0.0, 0.0],
+    [0.33, 0.006, 6.0, 0.5, 4.0, 3.0, 0.0, 1.0],
+    [0.75, 0.015, 8.0, 0.1, 6.0, 4.0, 12.0, 0.0],
+    [0.02, 0.0, 5.0, 0.7, 3.0, 1.6, 0.0, 0.0],
+    [0.7, 0.01, 7.0, 0.6, 4.5, 4.5, 6.0, 2.0],
+    [0.5, 0.03, 8.0, 0.5, 8.0, 6.0, 0.0, 4.0],
+    [0.58, 0.003, 3.0, 1.0, 2.5, 1.5, 0.0, 0.0],
+  ];
 
-  final Map<int, int> _vStart = {11: 0, 16: 0, 22: 0};
+  /// GPUに渡す極彩色の渦の設定（8つの数）
+  List<double> get psyUniforms => pattern == 23 ? _psyParams[variant] : const [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+
+  /// 種類を持つ模様（万華鏡・宝石の城・没入の旅・極彩色の渦）の、種類の名前の一覧
+  static List<String> namesFor(int pat) =>
+      pat == 16 ? castleNames : (pat == 22 ? journeyNames : (pat == 23 ? psyNames : kNames));
+  bool get hasVariants => pattern == 11 || pattern == 16 || pattern == 22 || pattern == 23;
+
+  final Map<int, int> _vStart = {11: 0, 16: 0, 22: 0, 23: 0};
   int _vNext = -1;
   double _kTime = 0; // 種類を切り替えるための時計（「ずっと見る」の間は止まる）
   bool kHold = false; // 同じ種類をずっと見る
@@ -281,7 +354,7 @@ class Drift extends ChangeNotifier {
   double _roll = 0, _pitch = 0; // いまのスマホの傾き
   double _baseRoll = 0, _basePitch = 0; // 基準にする傾き（ゆっくり今の持ち方に合わせる）
   bool _hasTilt = false;
-  bool get usesTilt => pattern == 16 || pattern >= 19;
+  bool get usesTilt => pattern == 16 || (pattern >= 19 && pattern <= 22);
 
   /// 加速度センサーの値（重力の向き）からスマホの傾きを求める
   void onAccel(double ax, double ay, double az) {
@@ -355,14 +428,14 @@ class Drift extends ChangeNotifier {
       logS = math.log(kWide);
       _newSeg(true);
     }
-    if (i == 11 || i == 16 || i == 22) {
+    if (i == 11 || i == 16 || i == 22 || i == 23) {
       _kTime = 0;
       if (_vNext >= 0) {
         _vStart[i] = _vNext;
         _vNext = -1;
       }
     }
-    if (i == 16 || i >= 19) {
+    if (i == 16 || (i >= 19 && i <= 22)) {
       _baseRoll = _roll; // 見回す基準を今の持ち方にする
       _basePitch = _pitch;
     }
@@ -417,7 +490,7 @@ class Drift extends ChangeNotifier {
     lookY += (ty - lookY) * f;
     if (autoCycle && _pending < 0 && !(hasVariants && kHold)) {
       _cycleTime += dt;
-      if (_cycleTime > (pattern == 0 ? 56 : (pattern == 11 ? 150 : (pattern == 16 ? 120 : (pattern == 22 ? 150 : 45))))) {
+      if (_cycleTime > (pattern == 0 ? 56 : (pattern == 11 ? 150 : (pattern == 16 ? 120 : (pattern == 22 || pattern == 23 ? 150 : 45))))) {
         requestPattern((pattern + 1) % patternList.length);
       }
     }
@@ -511,6 +584,7 @@ class Drift extends ChangeNotifier {
     if (pattern == 11) return '万華鏡：${kNames[variant]}';
     if (pattern == 16) return variant == 0 ? '宝石の城' : '宝石の城：${castleNames[variant]}';
     if (pattern == 22) return '没入の旅：${journeyNames[variant]}';
+    if (pattern == 23) return '極彩色の渦：${psyNames[variant]}';
     return info.name;
   }
 
@@ -536,6 +610,8 @@ class Drift extends ChangeNotifier {
         return '6方向に枝を伸ばして育つ（約24秒ごとに新しい結晶）';
       case 15:
         return '薄い膜に光が干渉して、虹色が流れる';
+      case 23:
+        return '${_psyDescs[variant]}（${variant + 1}/${psyNames.length}）${kHold ? '・ずっと表示中' : ''}';
       case 22:
         return '${_journeyDescs[variant]}（${variant + 1}/${journeyNames.length}）${kHold ? '・ずっと表示中' : ''}';
       case 19:

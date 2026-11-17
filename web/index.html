@@ -75,6 +75,7 @@ precision highp int;
 uniform vec2 uRes, uCenter, uJ;
 uniform float uScale, uRot, uShift, uIter, uMode, uTime, uVar;
 uniform vec2 uLook;             // 見回す向き（ドラッグで動かす）
+uniform vec4 uP1, uP2;          // 極彩色の渦の設定（8つの数）
 uniform vec3 uA, uB, uC, uD;
 uniform highp sampler2D uRef;   // マンデルブロ集合の「基準の点」の軌道（倍精度で計算した結果）
 uniform int uRefLen;
@@ -528,6 +529,77 @@ vec3 kaleido(vec2 p) {
   else if (v < 16.5) c = k8Shards(p);
   else c = k9Mandala(p);
   return c * uJ.y;
+}
+
+// ═══════ 極彩色の渦（20種類の違いは uP1・uP2 の8つの数で決める） ═══════
+// uP1 = (色相, 色相の移り変わる速さ, 渦の数, 大きな渦の割合)
+// uP2 = (渦のねじれの強さ, 縞の細かさ, 鏡で折り返す数（0=なし）, 塗り方)
+// 塗り方：0=補色 1=三原色 2=黒地にネオン 3=反転 4=虹
+
+vec3 hsv2rgb(vec3 c) {
+  vec3 k = clamp(abs(mod(c.x * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+  return c.z * mix(vec3(1.0), k, c.y);
+}
+
+vec3 psy(vec2 p) {
+  vec2 q = uP2.z > 0.5 ? kfold(p, uP2.z) : p;
+  q *= 1.4;
+  float t = uTime;
+  // 大小の渦が、ばらばらの時間と場所で生まれては消える
+  for (int i = 0; i < 8; i++) {
+    float fi = float(i);
+    if (fi >= uP1.z) break;
+    float period = 6.0 + 9.0 * hash(fi * 3.7 + 1.0);
+    float ph = t / period + hash(fi * 5.1);
+    float cyc = floor(ph);
+    float life = sin(3.14159265 * fract(ph));
+    vec2 hc = hash2(vec2(fi, cyc) * 1.37 + 0.5);
+    vec2 c = (hc - 0.5) * vec2(2.4, 3.2);
+    float big = step(hash(fi * 7.3 + cyc * 1.9), uP1.w);
+    float r = mix(0.12 + 0.12 * hc.x, 0.5 + 0.45 * hc.y, big);
+    float dir = hash(fi * 11.0 + cyc) < 0.5 ? -1.0 : 1.0;
+    vec2 d = q - c;
+    float fall = exp(-dot(d, d) / (r * r));
+    float ang = dir * uP2.x * life * fall * (1.0 + 2.0 * (1.0 - big));   // 小さな渦ほど速く回る
+    q = c + rot2(d, ang);
+  }
+  // 流れるガラス：領域を2重にゆがめる
+  float tt = t * 0.12;
+  vec2 a = vec2(fbm(q + vec2(0.0, tt)), fbm(q + vec2(5.2, 1.3 - tt)));
+  vec2 b = vec2(fbm(q + 3.0 * a + vec2(1.7, 9.2) + tt), fbm(q + 3.0 * a + vec2(8.3, 2.8) - tt));
+  float v = fbm(q + 2.5 * b);
+  float hue = uP1.x + uP1.y * t;
+  float band = v * uP2.y + length(b) * 1.5 - t * 0.15;
+  float s = 0.5 + 0.5 * cos(6.2831853 * band);
+  float sharp = smoothstep(0.35, 0.65, s);
+  float edge = 1.0 - abs(s - 0.5) * 2.0;
+  float m = uP2.w;
+  vec3 col;
+  if (m < 0.5) {
+    vec3 A = hsv2rgb(vec3(hue, 0.95, 1.0));
+    vec3 B = hsv2rgb(vec3(hue + 0.5, 0.95, 1.0));
+    col = mix(A, B, sharp) * (0.55 + 0.6 * v) + vec3(1.0) * pow(edge, 12.0) * 0.6;
+  } else if (m < 1.5) {
+    float k = fract(band);
+    float h = hue + floor(k * 3.0) / 3.0;
+    col = hsv2rgb(vec3(h, 0.95, 0.6 + 0.6 * v));
+    col += hsv2rgb(vec3(h + 0.5, 1.0, 1.0)) * pow(abs(fract(k * 3.0) - 0.5) * 2.0, 16.0) * 0.8;
+  } else if (m < 2.5) {
+    float line = pow(edge, 6.0);
+    vec3 A = hsv2rgb(vec3(hue, 1.0, 1.0));
+    vec3 B = hsv2rgb(vec3(hue + 0.5, 1.0, 1.0));
+    col = mix(A, B, step(0.5, fract(band * 0.5))) * line * 1.5 + vec3(1.0) * pow(edge, 40.0) * 0.6
+        + mix(A, B, v) * 0.1 * v;
+  } else if (m < 3.5) {
+    vec3 A = hsv2rgb(vec3(hue + v * 0.6, 1.0, 1.0));
+    col = abs(sin(A * 3.14159265 * (1.0 + 2.0 * s)));
+    col = mix(col, 1.0 - col, sharp);
+  } else {
+    float h = hue + band * 0.25;
+    col = hsv2rgb(vec3(h, 1.0, 0.55 + 0.6 * v));
+    col = mix(col, hsv2rgb(vec3(h + 0.5, 1.0, 1.0)), pow(edge, 10.0) * 0.8);
+  }
+  return col * uJ.y;
 }
 
 // ═══════ 没入感のある3つの景色（uLook = スマホの傾きで見回す向き） ═══════
@@ -1407,7 +1479,8 @@ vec3 shade(vec2 p) {
   if (uMode < 11.5) return imCave(pos);
   if (uMode < 12.5) return imLand(pos);
   if (uMode < 13.5) return imWarp(pos);
-  return journey(pos);
+  if (uMode < 14.5) return journey(pos);
+  return psy(pos);
 }
 
 void main() {
@@ -1434,7 +1507,7 @@ try { prog = program(FS); } catch(e){ fail('描画の準備に失敗しました
 gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,3,-1,-1,3]), gl.STATIC_DRAW);
 gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
-const U = {}; ['uRes','uCenter','uJ','uScale','uRot','uShift','uIter','uMode','uA','uB','uC','uD','uTime','uRef','uRefLen','uAA','uVar','uLook']
+const U = {}; ['uRes','uCenter','uJ','uScale','uRot','uShift','uIter','uMode','uA','uB','uC','uD','uTime','uRef','uRefLen','uAA','uVar','uLook','uP1','uP2']
   .forEach(k => U[k] = gl.getUniformLocation(prog,k));
 gl.useProgram(prog); gl.uniform1i(U.uRef, 1);
 
@@ -1484,6 +1557,7 @@ const PATTERNS = [
   {name:'夕暮れの大地を飛ぶ', sm:12},
   {name:'ワープ航行', sm:13},
   {name:'没入の旅', sm:14},
+  {name:'極彩色の渦', sm:15},
 ];
 // [名前, 実部, 虚部, 潜る深さ]：どれも奥に小さなマンデルブロ集合がある点
 const TARGETS = [
@@ -2079,7 +2153,7 @@ const Sound = (() => {
 })();
 
 // 見回せる模様（宝石の城と3つの景色）と、模様に合う環境音（0=静かな和音 1=風 2=洞窟 3=ワープ）
-const usesLook = i => i===16 || i>=19;
+const usesLook = i => i===16 || (i>=19 && i<=22);
 const scapeFor = i => i===22 ? J_SCAPES[kVar()] : (i===19 ? 2 : (i===20 ? 1 : (i===21 ? 3 : 0)));
 const LOOK = {x:0, y:0, tx:0, ty:0, drag:false};
 const CPU = {3:phyllo, 4:rd, 5:(attractorMT || attractor), 6:rose, 8:penrose, 9:lsys, 17:poly4, 18:flock};
@@ -2088,7 +2162,7 @@ const useRdGPU = () => rdGPU && rdGPU.ok;
 // ───────── 状態 ─────────
 const S = { pattern:0, pending:-1, fade:0, autoCycle:false, cycle:0, ptime:0,
   speed:1, playing:true, auto:true, cx:TARGETS[0][1], cy:TARGETS[0][2], logS:Math.log(WIDE),
-  rot:0, shift:0, jAngle:0, tIdx:0, seg:null, palIdx:0, palFrom:PALETTES[0], palT:1, vStart:{11:0,16:0,22:0}, kNext:-1, kTime:0, kHold:false };
+  rot:0, shift:0, jAngle:0, tIdx:0, seg:null, palIdx:0, palFrom:PALETTES[0], palT:1, vStart:{11:0,16:0,22:0,23:0}, kNext:-1, kTime:0, kHold:false };
 function newSeg(zoomIn){ const T=TARGETS[S.tIdx];
   const deep = Math.log(T[3]);
   S.seg={zoomIn, t:0, dur: zoomIn ? 6 + 4.5*Math.log10(WIDE/T[3]) : 14,
@@ -2112,8 +2186,12 @@ const C_DESCS=['メンガーのスポンジが並ぶ街を飛び抜ける','く�
 const J_NAMES=['雲海の上を飛ぶ','深海へ潜る','夜の光の森','ネオンの摩天楼','小惑星帯を抜ける','シンセウェイヴの道','夕暮れの海','氷の峡谷','溶岩の洞窟','オーロラの雪原'];
 const J_DESCS=['朝日に染まる雲の海の上を飛ぶ','光が届かなくなる深さへ、光る生き物の中を降りていく','木々の間を、蛍の光をぬって抜ける','夜の高層ビルの谷間を、窓の灯りの中で飛ぶ','宇宙に浮かぶ岩の間をすり抜ける','レトロな夕日と、光の格子の道を疾走する','波の上すれすれを、夕日に向かって飛ぶ','青い氷の崖の間を縫って進む','赤く光る裂け目の間を進む','夜空いっぱいに揺れるオーロラの下を進む'];
 const J_SCAPES=[1,2,0,3,3,0,1,1,2,0];
-const namesFor = i => i===16 ? C_NAMES : (i===22 ? J_NAMES : K_NAMES);
-const hasVariants = () => S.pattern===11 || S.pattern===16 || S.pattern===22;
+// 極彩色の渦 20種類（設定：色相・色の速さ・渦の数・大きな渦の割合・ねじれ・縞・鏡の数・塗り方）
+const P_NAMES=["ルビーとアクアマリン", "サファイアと琥珀", "紫水晶とペリドット", "桃色と翡翠", "補色の万華鏡", "ネオンの渦潮", "三原色の大渦", "小さな渦の群れ", "縞模様の嵐", "溶けた虹", "鏡の渦", "ネオンの流体", "反転する夢", "炎と氷", "森の幻", "万華鏡の嵐", "夕陽と海", "宇宙の染料", "極彩色の洪水", "静かな大渦"];
+const P_DESCS=["赤と青緑が、ぶつかり合いながら渦を巻く", "青と橙が、流れの中で入れ替わる", "紫と黄緑の縞が、大小の渦にねじれる", "桃色と翡翠色が、やわらかく溶け合う", "補色の渦を、6方向の鏡で折り返す", "黒い海に、補色のネオンの線が渦巻く", "三つの色が、大きな渦に巻き込まれる", "小さな渦が、あちこちで生まれては消える", "細かな補色の縞が、嵐のようにねじれる", "虹の色が溶けて流れ、境目に補色が光る", "虹の渦を、8方向の鏡で折り返す", "暗闇を、光る線の流れが埋め尽くす", "色が裏返りながら、ゆがんでいく", "橙の炎と青い氷が、せめぎ合う", "緑と紫と橙が、幻のように混ざる", "小さな渦の嵐を、12方向の鏡で折り返す", "夕陽の赤と海の青が、大きくうねる", "星雲のような光の線を、鏡で折り返す", "すべての色が、激しく渦を巻いてあふれる", "大きな渦が、ゆっくりと補色を混ぜる"];
+const P_PARAMS=[[0.98, 0.0, 6, 0.4, 4.0, 3.0, 0, 0], [0.6, 0.0, 6, 0.5, 4.5, 3.5, 0, 0], [0.78, 0.0, 7, 0.4, 5.0, 4.0, 0, 0], [0.92, 0.0, 6, 0.6, 3.5, 2.5, 0, 0], [0.85, 0.01, 6, 0.5, 4.0, 3.0, 6, 0], [0.55, 0.008, 7, 0.5, 5.0, 3.0, 0, 2], [0.0, 0.01, 4, 0.9, 6.0, 2.0, 0, 1], [0.3, 0.008, 8, 0.05, 6.0, 3.0, 0, 0], [0.12, 0.01, 7, 0.4, 5.0, 7.0, 0, 0], [0.0, 0.02, 5, 0.6, 3.0, 2.0, 0, 4], [0.65, 0.006, 6, 0.4, 5.0, 4.0, 8, 4], [0.9, 0.012, 6, 0.3, 4.0, 5.0, 0, 2], [0.4, 0.01, 6, 0.5, 4.0, 2.5, 0, 3], [0.07, 0.0, 6, 0.5, 5.0, 3.5, 0, 0], [0.33, 0.006, 6, 0.5, 4.0, 3.0, 0, 1], [0.75, 0.015, 8, 0.1, 6.0, 4.0, 12, 0], [0.02, 0.0, 5, 0.7, 3.0, 1.6, 0, 0], [0.7, 0.01, 7, 0.6, 4.5, 4.5, 6, 2], [0.5, 0.03, 8, 0.5, 8.0, 6.0, 0, 4], [0.58, 0.003, 3, 1.0, 2.5, 1.5, 0, 0]];
+const namesFor = i => i===16 ? C_NAMES : (i===22 ? J_NAMES : (i===23 ? P_NAMES : K_NAMES));
+const hasVariants = () => S.pattern===11 || S.pattern===16 || S.pattern===22 || S.pattern===23;
 const kVar = () => hasVariants() ? ((S.vStart[S.pattern]||0) + Math.floor(S.kTime/30)) % namesFor(S.pattern).length : 0;
 const kSegs = () => S.pattern===11 ? K_SEGS[kVar()] : 6;
 const kDim = () => { const fadeIn=Math.min(1,S.ptime/5); if(S.kHold) return fadeIn;
@@ -2123,7 +2201,7 @@ const usesGL = i => PATTERNS[i].sm >= 0 || (i === 4 && useRdGPU());
 function requestPattern(i){ if(i===S.pattern && S.pending<0) return; S.pending=i; }
 function apply(i){ S.pattern=i; S.ptime=0; S.cycle=0; S.auto=true; S.cx=0; S.cy=0; S.logS=0;
   if(i===0){ S.cx=TARGETS[S.tIdx][1]; S.cy=TARGETS[S.tIdx][2]; S.logS=Math.log(WIDE); newSeg(true); }
-  if(i===11 || i===16 || i===22){ S.kTime=0; if(S.kNext>=0){ S.vStart[i]=S.kNext; S.kNext=-1; } }
+  if(i===11 || i===16 || i===22 || i===23){ S.kTime=0; if(S.kNext>=0){ S.vStart[i]=S.kNext; S.kNext=-1; } }
   if(CPU[i]) CPU[i].reset();
   if(i===4 && rdGPU) rdGPU.reset();
   glc.style.display = usesGL(i) ? 'block' : 'none';
@@ -2165,7 +2243,7 @@ function frame(now){
   const dt=S.playing?raw*S.speed:0;
   S.ptime+=dt; S.rot+=dt*0.025; S.shift+=dt*0.035;
   if(hasVariants() && !S.kHold) S.kTime+=dt;
-  if(S.autoCycle && S.pending<0 && !(hasVariants() && S.kHold)){ S.cycle+=dt; if(S.cycle>(S.pattern===0?75:(S.pattern===11?150:(S.pattern===16?120:(S.pattern===22?150:45))))) requestPattern((S.pattern+1)%PATTERNS.length); }
+  if(S.autoCycle && S.pending<0 && !(hasVariants() && S.kHold)){ S.cycle+=dt; if(S.cycle>(S.pattern===0?75:(S.pattern===11?150:(S.pattern===16?120:(S.pattern===22||S.pattern===23?150:45))))) requestPattern((S.pattern+1)%PATTERNS.length); }
   S.palT=Math.min(1,S.palT+raw/1.8);
   const P=curPal(), cpu=CPU[S.pattern];
   if(S.pattern===0){ if(S.auto) stepTour(dt); }
@@ -2188,8 +2266,10 @@ function frame(now){
     gl.uniform2f(U.uRes,glc.width,glc.height); gl.uniform2f(U.uCenter,S.cx,S.cy);
     if(hasVariants()) gl.uniform2f(U.uJ,kSegs(),kDim());
     else gl.uniform2f(U.uJ,JR*Math.cos(S.jAngle),JR*Math.sin(S.jAngle));
-    gl.uniform1f(U.uScale,scale); gl.uniform1f(U.uRot,S.pattern>=19?0:S.rot); gl.uniform1f(U.uShift,S.shift);
+    gl.uniform1f(U.uScale,scale); gl.uniform1f(U.uRot,(S.pattern>=19&&S.pattern<=22)?0:S.rot); gl.uniform1f(U.uShift,S.shift);
     gl.uniform2f(U.uLook,LOOK.x,LOOK.y);
+    const pp = S.pattern===23 ? P_PARAMS[kVar()] : [0,0,0,0,0,0,0,0];
+    gl.uniform4f(U.uP1,pp[0],pp[1],pp[2],pp[3]); gl.uniform4f(U.uP2,pp[4],pp[5],pp[6],pp[7]);
     gl.uniform1f(U.uIter,iter); gl.uniform1f(U.uMode,sm); gl.uniform1f(U.uTime,S.ptime); gl.uniform1i(U.uAA,aa); gl.uniform1f(U.uVar,kVar());
     gl.uniform3fv(U.uA,P.a); gl.uniform3fv(U.uB,P.b); gl.uniform3fv(U.uC,P.c); gl.uniform3fv(U.uD,P.d);
     gl.drawArrays(gl.TRIANGLES,0,3);
@@ -2222,6 +2302,7 @@ function updateInfo(){
   else if(S.pattern===11){ place='万華鏡：'+K_NAMES[kVar()]; det=`${K_DESCS[kVar()]}（${kVar()+1}/${K_NAMES.length}）${S.kHold?'・ずっと表示中':''}`; }
   else if(S.pattern===4 && useRdGPU()) det='2つの物質が広がりながら反応する';
   else if(S.pattern===16){ place = kVar()===0 ? '宝石の城' : '宝石の城：'+C_NAMES[kVar()]; det=`${C_DESCS[kVar()]}（${kVar()+1}/${C_NAMES.length}）${S.kHold?'・ずっと表示中':''}`; }
+  else if(S.pattern===23){ place='極彩色の渦：'+P_NAMES[kVar()]; det=`${P_DESCS[kVar()]}（${kVar()+1}/${P_NAMES.length}）${S.kHold?'・ずっと表示中':''}`; }
   else if(S.pattern===22){ place='没入の旅：'+J_NAMES[kVar()]; det=`${J_DESCS[kVar()]}（${kVar()+1}/${J_NAMES.length}）${S.kHold?'・ずっと表示中':''}（ドラッグで見回せる）`; }
   else if(S.pattern>=19){ det=['曲がりくねった洞窟を、体を傾けながら進む','夕日に向かって、山と湖の上を低空で飛ぶ','星が光の筋になって、中心から外へ流れ去る'][S.pattern-19]+'（ドラッグで見回せる）'; }
   else if(S.pattern>=12 && S.pattern<=16) det=['水面で曲がった光が、底に揺れる網目を描く','色とりどりのガスと星の中を、奥へ奥へと進む','6方向に枝を伸ばして育つ（約24秒ごとに新しい結晶）','薄い膜に光が干渉して、虹色が流れる','メンガーのスポンジが並ぶ街を飛び抜ける'][S.pattern-12];
@@ -2254,8 +2335,9 @@ function buildMenu(){
     if(i===11) b.firstChild.textContent=`万華鏡（${K_NAMES.length}種類を順番に）`;
     if(i===16) b.firstChild.textContent=`宝石の城（${C_NAMES.length}種類を順番に）`;
     if(i===22) b.firstChild.textContent=`没入の旅（${J_NAMES.length}種類を順番に）`;
+    if(i===23) b.firstChild.textContent=`極彩色の渦（${P_NAMES.length}種類を順番に）`;
     on(b,()=>{ requestPattern(i); closeMenu(); }); m.appendChild(b);
-    if(i===11 || i===16 || i===22) namesFor(i).forEach((n,v)=>{ const c=document.createElement('button'); c.className='row';
+    if(i===11 || i===16 || i===22 || i===23) namesFor(i).forEach((n,v)=>{ const c=document.createElement('button'); c.className='row';
       c.style.cssText='padding:10px 20px 10px 44px;font-size:14px';
       c.innerHTML='<span></span><span>'+(S.pattern===i&&S.pending<0&&kVar()===v?'✓':'')+'</span>'; c.firstChild.textContent='・'+n;
       on(c,()=>{ requestVariant(i,v); closeMenu(); }); m.appendChild(c); }); });
