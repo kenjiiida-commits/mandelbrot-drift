@@ -145,9 +145,43 @@ class Drift extends ChangeNotifier {
 
   double get scale => math.exp(logS);
 
-  // 万華鏡：鏡で分ける数を30秒ごとに替え、替わる前後は暗くする
-  static const List<int> _kSegs = [6, 8, 12, 10];
-  double get kaleidoSegs => _kSegs[(ptime / 30).floor() % _kSegs.length].toDouble();
+  // 万華鏡 10種類：30秒ごとに次の種類へ。替わる前後は暗くする
+  static const List<String> kNames = [
+    '宝石のレース',
+    'エメラルドとサファイア',
+    '星屑',
+    '無限トンネル',
+    '双曲の鏡',
+    'アポロニウスのレース',
+    '流れるガラス',
+    '光の糸',
+    'ガラスの破片',
+    '花びらの曼荼羅',
+  ];
+  static const List<String> _kDescs = [
+    '折り返しと反転を繰り返して生まれるレース',
+    '緑と青の宝石を金の枠に散りばめる',
+    '青と緑のきらめきが流れていく',
+    'どこまでも奥へ続く鏡のトンネル',
+    '縁へ向かって無限に細かくなる敷き詰め',
+    '円の中に円が無限に詰まったレース',
+    '溶けたガラスのように宝石の色が流れる',
+    '光る糸が鏡の間を行き交う',
+    '色ガラスのかけらが重なって転がる',
+    '幾重もの花びらが呼吸する',
+  ];
+  static const List<int> _kSegs = [8, 6, 8, 8, 7, 6, 6, 12, 6, 8];
+  int _kStart = 0;
+  int _kNext = -1;
+  int get kaleidoVar => (_kStart + (ptime / 30).floor()) % kNames.length;
+  double get kaleidoSegs => _kSegs[kaleidoVar].toDouble();
+
+  /// メニューで選んだ種類の万華鏡から始める
+  void requestKaleido(int v) {
+    _kNext = v;
+    _pending = 11;
+  }
+
   double get kaleidoDim {
     final fr = ptime / 30 - (ptime / 30).floor();
     return math.min(1.0, math.min(fr * 6, (1 - fr) * 6));
@@ -206,6 +240,10 @@ class Drift extends ChangeNotifier {
       logS = math.log(kWide);
       _newSeg(true);
     }
+    if (i == 11 && _kNext >= 0) {
+      _kStart = _kNext;
+      _kNext = -1;
+    }
     cpu[i]?.reset();
   }
 
@@ -244,7 +282,7 @@ class Drift extends ChangeNotifier {
 
     if (autoCycle && _pending < 0) {
       _cycleTime += dt;
-      if (_cycleTime > (pattern == 0 ? 56 : 45)) {
+      if (_cycleTime > (pattern == 0 ? 56 : (pattern == 11 ? 150 : 45))) {
         requestPattern((pattern + 1) % patternList.length);
       }
     }
@@ -335,6 +373,7 @@ class Drift extends ChangeNotifier {
       if (!auto) return '自由探索';
       return seg.zoomIn ? targets[tIdx].name : '→ ${targets[tIdx].name}';
     }
+    if (pattern == 11) return '万華鏡：${kNames[kaleidoVar]}';
     return info.name;
   }
 
@@ -353,7 +392,7 @@ class Drift extends ChangeNotifier {
       case 10:
         return '3つの波源の波が強め合い、打ち消し合う';
       case 11:
-        return '${kaleidoSegs.toInt()}方向に鏡で折り返した模様';
+        return '${_kDescs[kaleidoVar]}（${kaleidoVar + 1}/${kNames.length}）';
       default:
         return cpu[pattern]?.detail(ptime) ?? '';
     }

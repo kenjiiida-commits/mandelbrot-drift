@@ -115,15 +115,30 @@ class _DriftPageState extends State<DriftPage> with SingleTickerProviderStateMix
                   onChanged: (v) => setSheet(() => drift.autoCycle = v),
                 ),
                 const Divider(height: 1),
-                for (var i = 0; i < patternList.length; i++)
+                for (var i = 0; i < patternList.length; i++) ...[
                   ListTile(
-                    title: Text(patternList[i].name),
+                    title: Text(i == 11 ? '万華鏡（10種類を順番に）' : patternList[i].name),
                     trailing: i == drift.pattern ? const Icon(Icons.check) : null,
                     onTap: () {
                       drift.requestPattern(i);
                       Navigator.pop(ctx);
                     },
                   ),
+                  if (i == 11)
+                    for (var v = 0; v < Drift.kNames.length; v++)
+                      ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.only(left: 40, right: 16),
+                        title: Text('・${Drift.kNames[v]}'),
+                        trailing: (drift.pattern == 11 && drift.kaleidoVar == v)
+                            ? const Icon(Icons.check, size: 18)
+                            : null,
+                        onTap: () {
+                          drift.requestKaleido(v);
+                          Navigator.pop(ctx);
+                        },
+                      ),
+                ],
               ],
             ),
           ),
@@ -307,6 +322,7 @@ class FractalPainter extends CustomPainter {
       f(v);
     }
     f(drift.ptime);
+    f(drift.kaleidoVar.toDouble());
 
     final recorder = ui.PictureRecorder();
     Canvas(recorder).drawRect(
