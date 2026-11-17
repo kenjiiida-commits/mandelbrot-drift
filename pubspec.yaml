@@ -1,7 +1,7 @@
 name: mandelbrot_drift
 description: スマホのGPUでマンデルブロ集合を描き続けるアプリ
 publish_to: 'none'
-version: 1.6.0+7
+version: 1.7.0+9
 
 environment:
   sdk: ^3.4.0
@@ -9,6 +9,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  sensors_plus: any   # スマホの傾き（加速度センサー）
+  audioplayers: any   # 環境音を鳴らす
 
 dev_dependencies:
   flutter_test:

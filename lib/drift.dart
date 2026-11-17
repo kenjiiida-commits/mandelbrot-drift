@@ -34,6 +34,9 @@ const List<PatternInfo> patternList = [
   PatternInfo('宝石の城（立体フラクタル）', 10),
   PatternInfo('4次元の立体', -1),
   PatternInfo('光の群れ', -1),
+  PatternInfo('光る洞窟を飛ぶ', 11),
+  PatternInfo('夕暮れの大地を飛ぶ', 12),
+  PatternInfo('ワープ航行', 13),
 ];
 
 // ───────────── マンデルブロ集合の行き先（名所）と配色 ─────────────
@@ -244,6 +247,30 @@ class Drift extends ChangeNotifier {
     _pending = pat;
   }
 
+  // ── スマホの傾きで見回す（3Dの景色と宝石の城） ──
+  bool tiltOn = true;
+  double lookX = 0, lookY = 0; // 実際に見ている向き（なめらかに追いかける）
+  double _roll = 0, _pitch = 0; // いまのスマホの傾き
+  double _baseRoll = 0, _basePitch = 0; // 基準にする傾き（ゆっくり今の持ち方に合わせる）
+  bool _hasTilt = false;
+  bool get usesTilt => pattern == 16 || pattern >= 19;
+
+  /// 加速度センサーの値（重力の向き）からスマホの傾きを求める
+  void onAccel(double ax, double ay, double az) {
+    _roll = math.atan2(ax, ay); // ハンドルのように左右に傾ける
+    _pitch = math.atan2(az, ay); // 上端を手前・奥に倒す
+    if (!_hasTilt) {
+      _baseRoll = _roll;
+      _basePitch = _pitch;
+      _hasTilt = true;
+    }
+  }
+
+  void toggleTilt() => tiltOn = !tiltOn;
+
+  /// 模様に合う環境音（0=静かな和音 1=風 2=洞窟 3=ワープ）
+  int get scape => pattern == 19 ? 2 : (pattern == 20 ? 1 : (pattern == 21 ? 3 : 0));
+
   PatternInfo get info => patternList[pattern];
   int get shaderMode => info.shaderMode;
 
@@ -305,6 +332,10 @@ class Drift extends ChangeNotifier {
         _vNext = -1;
       }
     }
+    if (i == 16 || i >= 19) {
+      _baseRoll = _roll;
+      _basePitch = _pitch;
+    }
     cpu[i]?.reset();
   }
 
@@ -342,6 +373,18 @@ class Drift extends ChangeNotifier {
     shift += dt * 0.035;
 
     if (hasVariants && !kHold) _kTime += dt;
+    // 傾きの基準をゆっくり今の持ち方に近づけ、見回す向きをなめらかに追いかける
+    if (_hasTilt) {
+      final k = math.min(1.0, raw * 0.08);
+      _baseRoll += (_roll - _baseRoll) * k;
+      _basePitch += (_pitch - _basePitch) * k;
+    }
+    final on = tiltOn && usesTilt && _hasTilt;
+    final tx = on ? math.max(-0.9, math.min(0.9, (_roll - _baseRoll) * 1.2)) : 0.0;
+    final ty = on ? math.max(-0.7, math.min(0.7, (_pitch - _basePitch) * 1.0)) : 0.0;
+    final f = math.min(1.0, raw * 6);
+    lookX += (tx - lookX) * f;
+    lookY += (ty - lookY) * f;
     if (autoCycle && _pending < 0 && !(hasVariants && kHold)) {
       _cycleTime += dt;
       if (_cycleTime > (pattern == 0 ? 56 : (pattern == 11 ? 150 : (pattern == 16 ? 120 : 45)))) {
@@ -462,6 +505,12 @@ class Drift extends ChangeNotifier {
         return '6方向に枝を伸ばして育つ（約24秒ごとに新しい結晶）';
       case 15:
         return '薄い膜に光が干渉して、虹色が流れる';
+      case 19:
+        return '曲がりくねった洞窟を、体を傾けながら進む${tiltOn ? '（スマホを傾けると見回せる）' : ''}';
+      case 20:
+        return '夕日に向かって、山と湖の上を低空で飛ぶ${tiltOn ? '（スマホを傾けると見回せる）' : ''}';
+      case 21:
+        return '星が光の筋になって、中心から外へ流れ去る${tiltOn ? '（スマホを傾けると見回せる）' : ''}';
       case 16:
         return '${_castleDescs[variant]}（${variant + 1}/${castleNames.length}）${kHold ? '・ずっと表示中' : ''}';
       case 11:

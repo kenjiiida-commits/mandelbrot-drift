@@ -6,7 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
+import 'package:sensors_plus/sensors_plus.dart';
+
 import 'drift.dart';
+import 'sound.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,8 +39,11 @@ class DriftPage extends StatefulWidget {
   State<DriftPage> createState() => _DriftPageState();
 }
 
-class _DriftPageState extends State<DriftPage> with SingleTickerProviderStateMixin {
+class _DriftPageState extends State<DriftPage> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final Drift drift = Drift();
+  final SoundEngine sound = SoundEngine();
+  StreamSubscription<AccelerometerEvent>? accel;
+  int lastScape = -1;
   ui.FragmentShader? shader;
   String? error;
   late final Ticker ticker;
@@ -56,9 +62,32 @@ class _DriftPageState extends State<DriftPage> with SingleTickerProviderStateMix
       final dt = (elapsed - last).inMicroseconds / 1e6;
       last = elapsed;
       drift.tick(dt);
+      // 模様が替わったら、合う環境音に切り替える
+      if (drift.scape != lastScape) {
+        lastScape = drift.scape;
+        sound.setScape(lastScape);
+      }
     });
     _load();
     showUi();
+    sound.init();
+    WidgetsBinding.instance.addObserver(this);
+    // スマホの傾き（加速度センサー）を受け取る
+    try {
+      accel = accelerometerEventStream(samplingPeriod: SensorInterval.gameInterval).listen(
+        (e) => drift.onAccel(e.x, e.y, e.z),
+        onError: (_) {},
+      );
+    } catch (_) {}
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      sound.resumeFromBackground();
+    } else if (state == AppLifecycleState.paused) {
+      sound.pauseForBackground();
+    }
   }
 
   Future<void> _load() async {
@@ -74,6 +103,9 @@ class _DriftPageState extends State<DriftPage> with SingleTickerProviderStateMix
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    accel?.cancel();
+    sound.dispose();
     ticker.dispose();
     hideTimer?.cancel();
     shader?.dispose();
@@ -219,16 +251,15 @@ class _DriftPageState extends State<DriftPage> with SingleTickerProviderStateMix
           right: 12,
           bottom: 16,
           child: Center(
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Container(
+            child: Container(
                 padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
                   color: const Color(0x99141418),
-                  borderRadius: BorderRadius.circular(999),
+                  borderRadius: BorderRadius.circular(24),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
+                child: Wrap(
+                  alignment: WrapAlignment.center,
+                  runSpacing: 6,
                   children: [
                     _btn(drift.autoCycle ? '模様（おまかせ）' : '模様', _openMenu, direct: true),
                     _btn('色', () => drift.nextColor()),
@@ -240,9 +271,11 @@ class _DriftPageState extends State<DriftPage> with SingleTickerProviderStateMix
                         () => drift.playButton()),
                     if (drift.hasVariants)
                       _btn(drift.kHold ? 'ずっと見る：オン' : 'ずっと見る', () => drift.toggleHold()),
+                    if (drift.usesTilt)
+                      _btn(drift.tiltOn ? '見回す：オン' : '見回す：オフ', () => drift.toggleTilt()),
+                    _btn(sound.enabled ? '音：オン' : '音：オフ', () => sound.toggle()),
                   ],
                 ),
-              ),
             ),
           ),
         ),
@@ -318,7 +351,7 @@ class FractalPainter extends CustomPainter {
       f(kJuliaR * math.sin(drift.jAngle));
     }
     f(drift.scale);
-    f(drift.rot);
+    f(drift.pattern >= 19 ? 0.0 : drift.rot); // 3Dの景色は画面を回さない
     f(drift.shift);
     f(drift.iterations);
     f(drift.shaderMode.toDouble());
@@ -327,6 +360,8 @@ class FractalPainter extends CustomPainter {
     }
     f(drift.ptime);
     f(drift.kaleidoVar.toDouble());
+    f(drift.lookX);
+    f(drift.lookY);
 
     final recorder = ui.PictureRecorder();
     Canvas(recorder).drawRect(

@@ -18,6 +18,7 @@ uniform vec3 uC;        // 17-19
 uniform vec3 uD;        // 20-22
 uniform float uTime;    // 23    経過時間（波・ボロノイ・ニュートン法の動き）
 uniform float uVar;     // 24    万華鏡（0〜17）・宝石の城（0〜5）の種類
+uniform vec2 uLook;     // 25,26 スマホの傾きで見回す向き
 
 out vec4 fragColor;
 
@@ -460,6 +461,149 @@ vec3 kaleido(vec2 p) {
   return c * uJ.y;
 }
 
+// ═══════ 没入感のある3つの景色（uLook = スマホの傾きで見回す向き） ═══════
+
+float hs2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+
+float vn2(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hs2(i), hs2(i + vec2(1.0, 0.0)), u.x), mix(hs2(i + vec2(0.0, 1.0)), hs2(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+float fbmN(vec2 p, float oct) {
+  float s = 0.0;
+  float w = 0.5;
+  for (int i = 0; i < 6; i++) {
+    if (float(i) >= oct) break;
+    s += w * vn2(p);
+    p = mat2(1.6, 1.2, -1.2, 1.6) * p;
+    w *= 0.5;
+  }
+  return s;
+}
+
+vec3 lookAround(vec3 rd) {
+  rd.xz = rot2(rd.xz, -uLook.x);
+  rd.yz = rot2(rd.yz, uLook.y);
+  return rd;
+}
+
+// ── 光る洞窟を飛ぶ：曲がりくねった洞窟を、体を傾けながら進む ──
+vec3 imPath(float z) {
+  return vec3(sin(z * 0.23) * 2.2 + sin(z * 0.11), cos(z * 0.17) * 1.4, z);
+}
+
+float imCaveDE(vec3 p) {
+  float g = abs(dot(sin(p * 1.3), cos(p.yzx * 1.3))) / 1.3 - 0.16;
+  float tun = 1.25 - length(p.xy - imPath(p.z).xy);
+  return max(g, tun);
+}
+
+vec3 imCave(vec2 p) {
+  vec2 uv = p * 0.5;
+  float t = uTime * 2.2;
+  vec3 ro = imPath(t);
+  vec3 fw = normalize(imPath(t + 2.0) - ro);
+  vec3 rt = normalize(cross(vec3(0.0, 1.0, 0.0), fw));
+  vec3 up = cross(fw, rt);
+  uv = rot2(uv, (imPath(t + 3.0).x - ro.x) * 0.25);   // カーブで体が傾く
+  vec3 rd = normalize(fw * 1.3 + rt * uv.x + up * uv.y);
+  rd = lookAround(rd);
+  float d = 0.0;
+  float glow = 0.0;
+  vec3 pos = ro;
+  bool hit = false;
+  for (int i = 0; i < 90; i++) {
+    pos = ro + rd * d;
+    float s = imCaveDE(pos);
+    glow += 0.012 / (1.0 + s * s * 400.0);
+    if (s < 0.002) { hit = true; break; }
+    if (d > 25.0) break;
+    d += s * 0.8;
+  }
+  vec3 bg = vec3(0.0, 0.01, 0.03);
+  vec3 glw = vec3(0.2, 0.5, 1.0) * glow;
+  if (!hit) return bg + glw;
+  vec2 e = vec2(0.002, 0.0);
+  vec3 n = normalize(vec3(imCaveDE(pos + e.xyy) - imCaveDE(pos - e.xyy),
+                          imCaveDE(pos + e.yxy) - imCaveDE(pos - e.yxy),
+                          imCaveDE(pos + e.yyx) - imCaveDE(pos - e.yyx)));
+  float dif = max(dot(n, -rd), 0.0);
+  vec3 base = 0.5 + 0.5 * cos(6.2831853 * (pos.z * 0.03 + uShift * 0.2 + vec3(0.55, 0.4, 0.25)));
+  float vein = pow(abs(sin(pos.x * 3.0 + pos.y * 2.0 + pos.z * 2.5 + uTime)), 20.0);
+  vec3 c = base * (0.08 + 0.9 * dif * dif) + vec3(0.3, 1.0, 0.9) * vein * 0.8;
+  return mix(bg, c, exp(-d * 0.12)) + glw;
+}
+
+// ── 夕暮れの大地を飛ぶ：夕日に向かって、山と湖の上を低空で飛ぶ ──
+float imHeight(vec2 x, float oct) { return fbmN(x * 0.18, oct) * 6.0 - 2.2; }
+
+vec3 imSky(vec3 rd, vec3 sd) {
+  float s = max(dot(rd, sd), 0.0);
+  vec3 c = mix(vec3(0.95, 0.45, 0.25), vec3(0.1, 0.15, 0.4), clamp(rd.y * 2.5, 0.0, 1.0));
+  return c + vec3(1.0, 0.7, 0.4) * pow(s, 40.0) * 1.5 + vec3(1.0, 0.5, 0.2) * pow(s, 6.0) * 0.3;
+}
+
+vec3 imLand(vec2 p) {
+  vec2 uv = p * 0.5;
+  float t = uTime * 5.0;
+  vec3 ro = vec3(sin(uTime * 0.15) * 6.0, 0.0, t);
+  ro.y = max(imHeight(ro.xz, 4.0), 0.0) + 2.5 + sin(uTime * 0.3) * 0.5;
+  vec3 rd = normalize(vec3(rot2(uv, 0.15 * sin(uTime * 0.15)), 1.5));   // 旋回で機体が傾く
+  rd.yz = rot2(rd.yz, 0.22);    // 少し下を向いて、地面が画面の下半分に来るように
+  rd = lookAround(rd);
+  vec3 sd = normalize(vec3(-0.3, 0.12, 1.0));
+  float d = 0.5;
+  bool hit = false;
+  vec3 pos = ro;
+  for (int i = 0; i < 100; i++) {
+    pos = ro + rd * d;
+    float dy = pos.y - max(imHeight(pos.xz, 4.0), 0.0);
+    if (dy < 0.01 * d) { hit = true; break; }
+    d += max(dy * 0.45, 0.02 * d);
+    if (d > 80.0) break;
+  }
+  vec3 sk = imSky(rd, sd);
+  if (!hit) return sk;
+  float hh = imHeight(pos.xz, 6.0);
+  vec3 c;
+  if (hh < 0.0) {
+    c = imSky(reflect(rd, vec3(0.0, 1.0, 0.0)), sd) * 0.6 + vec3(0.0, 0.05, 0.1);   // 湖が空を映す
+  } else {
+    vec2 e = vec2(0.05, 0.0);
+    vec3 n = normalize(vec3(imHeight(pos.xz - e.xy, 6.0) - imHeight(pos.xz + e.xy, 6.0), 0.1,
+                            imHeight(pos.xz - e.yx, 6.0) - imHeight(pos.xz + e.yx, 6.0)));
+    vec3 m = mix(vec3(0.12, 0.25, 0.08), vec3(0.35, 0.28, 0.2), smoothstep(0.5, 2.0, hh));
+    m = mix(m, vec3(1.0), smoothstep(2.6, 3.2, hh + n.y));
+    c = m * (0.25 + 1.1 * max(dot(n, sd), 0.0)) * vec3(1.0, 0.8, 0.6);
+  }
+  return mix(c, sk * 0.9, 1.0 - exp(-d * 0.035));
+}
+
+// ── ワープ航行：星が光の筋になって、中心から外へ流れ去る ──
+vec3 imWarp(vec2 p) {
+  vec2 uv = p * 0.5 - uLook * vec2(0.35, -0.35);
+  float r = length(uv);
+  float a = atan(uv.y, uv.x);
+  vec3 c = vec3(0.0, 0.005, 0.02) + vec3(0.3, 0.5, 1.0) * 0.04 / (r + 0.05);
+  for (int l = 0; l < 4; l++) {
+    float fl = float(l);
+    float n = 50.0 + fl * 30.0;
+    float k = a / 6.2832 * n;
+    float cell = floor(k);
+    float h = fract(sin((cell + fl * 97.0) * 127.1) * 43758.5);
+    float dep = fract(h * 7.0 + uTime * (0.35 + 0.4 * h) * (1.0 + 0.3 * sin(uTime * 0.2)));
+    float rr = dep * dep * 1.6;
+    float len = 0.03 + dep * dep * 0.5;
+    float da = abs(fract(k) - 0.5) / n * 6.2832 * r;
+    float s = exp(-da * da * 6e4) * smoothstep(rr - len, rr, r) * step(r, rr) * dep;
+    c += mix(vec3(0.4, 0.6, 1.0), vec3(1.0), h) * s * 1.6;
+  }
+  return c;
+}
+
 // ═══════ 自然の光と立体の模様（万華鏡の部品 kfold・rot2・hash2・fbm・jewel を使う） ═══════
 
 // ── 水の底でゆらめく光：水面で曲がった光が、底に網目の模様を作る ──
@@ -659,6 +803,7 @@ vec3 crystal(vec2 p, float mode) {
   rd.xy = rot2(rd.xy, roll ? t * 1.1 + 0.6 * sin(t * 0.3) : t * 0.1);     // キリモミでは機体ごと回る
   rd.xz = rot2(rd.xz, 0.25 * sin(t * 0.21));
   rd.yz = rot2(rd.yz, 0.2 * sin(t * 0.17));
+  rd = lookAround(rd);   // スマホの傾きで見回す
 
   vec3 fogCol = mode > 3.5 && mode < 4.5 ? vec3(0.06, 0.03, 0.01)
               : (mode > 2.5 && mode < 3.5 ? vec3(0.0, 0.0, 0.02) : vec3(0.01, 0.03, 0.09));
@@ -800,7 +945,7 @@ void main() {
   vec2 pos = uCenter + p * uScale;
 
   // 0,1=マンデルブロ・ジュリア 2=ニュートン法 3=波の干渉 4=ボロノイ図 5=万華鏡
-  // 6=水の底の光 7=星雲 8=雪の結晶 9=シャボン玉 10=宝石の城
+  // 6=水の底の光 7=星雲 8=雪の結晶 9=シャボン玉 10=宝石の城 11=洞窟 12=大地 13=ワープ
   vec3 col;
   if (uMode < 1.5) col = escapeTime(pos);
   else if (uMode < 2.5) col = newton(pos);
@@ -811,6 +956,9 @@ void main() {
   else if (uMode < 7.5) col = nebula(pos);
   else if (uMode < 8.5) col = snowflake(pos);
   else if (uMode < 9.5) col = soap(pos);
-  else col = crystal(pos, uVar) * uJ.y;
+  else if (uMode < 10.5) col = crystal(pos, uVar) * uJ.y;
+  else if (uMode < 11.5) col = imCave(pos);
+  else if (uMode < 12.5) col = imLand(pos);
+  else col = imWarp(pos);
   fragColor = vec4(pow(clamp(col, 0.0, 1.0), vec3(0.95)), 1.0);
 }

@@ -50,6 +50,7 @@
   <button id="bSpeed">速さ 1×</button>
   <button id="bPlay">一時停止</button>
   <button id="bHold" style="display:none">ずっと見る</button>
+  <button id="bSound">音：オフ</button>
   <button id="bFull">全画面</button>
 </div>
 <div id="menu"></div>
@@ -73,6 +74,7 @@ precision highp float;
 precision highp int;
 uniform vec2 uRes, uCenter, uJ;
 uniform float uScale, uRot, uShift, uIter, uMode, uTime, uVar;
+uniform vec2 uLook;             // 見回す向き（ドラッグで動かす）
 uniform vec3 uA, uB, uC, uD;
 uniform highp sampler2D uRef;   // マンデルブロ集合の「基準の点」の軌道（倍精度で計算した結果）
 uniform int uRefLen;
@@ -528,6 +530,149 @@ vec3 kaleido(vec2 p) {
   return c * uJ.y;
 }
 
+// ═══════ 没入感のある3つの景色（uLook = スマホの傾きで見回す向き） ═══════
+
+float hs2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+
+float vn2(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hs2(i), hs2(i + vec2(1.0, 0.0)), u.x), mix(hs2(i + vec2(0.0, 1.0)), hs2(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+float fbmN(vec2 p, float oct) {
+  float s = 0.0;
+  float w = 0.5;
+  for (int i = 0; i < 6; i++) {
+    if (float(i) >= oct) break;
+    s += w * vn2(p);
+    p = mat2(1.6, 1.2, -1.2, 1.6) * p;
+    w *= 0.5;
+  }
+  return s;
+}
+
+vec3 lookAround(vec3 rd) {
+  rd.xz = rot2(rd.xz, -uLook.x);
+  rd.yz = rot2(rd.yz, uLook.y);
+  return rd;
+}
+
+// ── 光る洞窟を飛ぶ：曲がりくねった洞窟を、体を傾けながら進む ──
+vec3 imPath(float z) {
+  return vec3(sin(z * 0.23) * 2.2 + sin(z * 0.11), cos(z * 0.17) * 1.4, z);
+}
+
+float imCaveDE(vec3 p) {
+  float g = abs(dot(sin(p * 1.3), cos(p.yzx * 1.3))) / 1.3 - 0.16;
+  float tun = 1.25 - length(p.xy - imPath(p.z).xy);
+  return max(g, tun);
+}
+
+vec3 imCave(vec2 p) {
+  vec2 uv = p * 0.5;
+  float t = uTime * 2.2;
+  vec3 ro = imPath(t);
+  vec3 fw = normalize(imPath(t + 2.0) - ro);
+  vec3 rt = normalize(cross(vec3(0.0, 1.0, 0.0), fw));
+  vec3 up = cross(fw, rt);
+  uv = rot2(uv, (imPath(t + 3.0).x - ro.x) * 0.25);   // カーブで体が傾く
+  vec3 rd = normalize(fw * 1.3 + rt * uv.x + up * uv.y);
+  rd = lookAround(rd);
+  float d = 0.0;
+  float glow = 0.0;
+  vec3 pos = ro;
+  bool hit = false;
+  for (int i = 0; i < 90; i++) {
+    pos = ro + rd * d;
+    float s = imCaveDE(pos);
+    glow += 0.012 / (1.0 + s * s * 400.0);
+    if (s < 0.002) { hit = true; break; }
+    if (d > 25.0) break;
+    d += s * 0.8;
+  }
+  vec3 bg = vec3(0.0, 0.01, 0.03);
+  vec3 glw = vec3(0.2, 0.5, 1.0) * glow;
+  if (!hit) return bg + glw;
+  vec2 e = vec2(0.002, 0.0);
+  vec3 n = normalize(vec3(imCaveDE(pos + e.xyy) - imCaveDE(pos - e.xyy),
+                          imCaveDE(pos + e.yxy) - imCaveDE(pos - e.yxy),
+                          imCaveDE(pos + e.yyx) - imCaveDE(pos - e.yyx)));
+  float dif = max(dot(n, -rd), 0.0);
+  vec3 base = 0.5 + 0.5 * cos(6.2831853 * (pos.z * 0.03 + uShift * 0.2 + vec3(0.55, 0.4, 0.25)));
+  float vein = pow(abs(sin(pos.x * 3.0 + pos.y * 2.0 + pos.z * 2.5 + uTime)), 20.0);
+  vec3 c = base * (0.08 + 0.9 * dif * dif) + vec3(0.3, 1.0, 0.9) * vein * 0.8;
+  return mix(bg, c, exp(-d * 0.12)) + glw;
+}
+
+// ── 夕暮れの大地を飛ぶ：夕日に向かって、山と湖の上を低空で飛ぶ ──
+float imHeight(vec2 x, float oct) { return fbmN(x * 0.18, oct) * 6.0 - 2.2; }
+
+vec3 imSky(vec3 rd, vec3 sd) {
+  float s = max(dot(rd, sd), 0.0);
+  vec3 c = mix(vec3(0.95, 0.45, 0.25), vec3(0.1, 0.15, 0.4), clamp(rd.y * 2.5, 0.0, 1.0));
+  return c + vec3(1.0, 0.7, 0.4) * pow(s, 40.0) * 1.5 + vec3(1.0, 0.5, 0.2) * pow(s, 6.0) * 0.3;
+}
+
+vec3 imLand(vec2 p) {
+  vec2 uv = p * 0.5;
+  float t = uTime * 5.0;
+  vec3 ro = vec3(sin(uTime * 0.15) * 6.0, 0.0, t);
+  ro.y = max(imHeight(ro.xz, 4.0), 0.0) + 2.5 + sin(uTime * 0.3) * 0.5;
+  vec3 rd = normalize(vec3(rot2(uv, 0.15 * sin(uTime * 0.15)), 1.5));   // 旋回で機体が傾く
+  rd.yz = rot2(rd.yz, 0.22);    // 少し下を向いて、地面が画面の下半分に来るように
+  rd = lookAround(rd);
+  vec3 sd = normalize(vec3(-0.3, 0.12, 1.0));
+  float d = 0.5;
+  bool hit = false;
+  vec3 pos = ro;
+  for (int i = 0; i < 100; i++) {
+    pos = ro + rd * d;
+    float dy = pos.y - max(imHeight(pos.xz, 4.0), 0.0);
+    if (dy < 0.01 * d) { hit = true; break; }
+    d += max(dy * 0.45, 0.02 * d);
+    if (d > 80.0) break;
+  }
+  vec3 sk = imSky(rd, sd);
+  if (!hit) return sk;
+  float hh = imHeight(pos.xz, 6.0);
+  vec3 c;
+  if (hh < 0.0) {
+    c = imSky(reflect(rd, vec3(0.0, 1.0, 0.0)), sd) * 0.6 + vec3(0.0, 0.05, 0.1);   // 湖が空を映す
+  } else {
+    vec2 e = vec2(0.05, 0.0);
+    vec3 n = normalize(vec3(imHeight(pos.xz - e.xy, 6.0) - imHeight(pos.xz + e.xy, 6.0), 0.1,
+                            imHeight(pos.xz - e.yx, 6.0) - imHeight(pos.xz + e.yx, 6.0)));
+    vec3 m = mix(vec3(0.12, 0.25, 0.08), vec3(0.35, 0.28, 0.2), smoothstep(0.5, 2.0, hh));
+    m = mix(m, vec3(1.0), smoothstep(2.6, 3.2, hh + n.y));
+    c = m * (0.25 + 1.1 * max(dot(n, sd), 0.0)) * vec3(1.0, 0.8, 0.6);
+  }
+  return mix(c, sk * 0.9, 1.0 - exp(-d * 0.035));
+}
+
+// ── ワープ航行：星が光の筋になって、中心から外へ流れ去る ──
+vec3 imWarp(vec2 p) {
+  vec2 uv = p * 0.5 - uLook * vec2(0.35, -0.35);
+  float r = length(uv);
+  float a = atan(uv.y, uv.x);
+  vec3 c = vec3(0.0, 0.005, 0.02) + vec3(0.3, 0.5, 1.0) * 0.04 / (r + 0.05);
+  for (int l = 0; l < 4; l++) {
+    float fl = float(l);
+    float n = 50.0 + fl * 30.0;
+    float k = a / 6.2832 * n;
+    float cell = floor(k);
+    float h = fract(sin((cell + fl * 97.0) * 127.1) * 43758.5);
+    float dep = fract(h * 7.0 + uTime * (0.35 + 0.4 * h) * (1.0 + 0.3 * sin(uTime * 0.2)));
+    float rr = dep * dep * 1.6;
+    float len = 0.03 + dep * dep * 0.5;
+    float da = abs(fract(k) - 0.5) / n * 6.2832 * r;
+    float s = exp(-da * da * 6e4) * smoothstep(rr - len, rr, r) * step(r, rr) * dep;
+    c += mix(vec3(0.4, 0.6, 1.0), vec3(1.0), h) * s * 1.6;
+  }
+  return c;
+}
+
 // ═══════ 自然の光と立体の模様（万華鏡の部品 kfold・rot2・hash2・fbm・jewel を使う） ═══════
 
 // ── 水の底でゆらめく光：水面で曲がった光が、底に網目の模様を作る ──
@@ -727,6 +872,7 @@ vec3 crystal(vec2 p, float mode) {
   rd.xy = rot2(rd.xy, roll ? t * 1.1 + 0.6 * sin(t * 0.3) : t * 0.1);     // キリモミでは機体ごと回る
   rd.xz = rot2(rd.xz, 0.25 * sin(t * 0.21));
   rd.yz = rot2(rd.yz, 0.2 * sin(t * 0.17));
+  rd = lookAround(rd);   // スマホの傾きで見回す
 
   vec3 fogCol = mode > 3.5 && mode < 4.5 ? vec3(0.06, 0.03, 0.01)
               : (mode > 2.5 && mode < 3.5 ? vec3(0.0, 0.0, 0.02) : vec3(0.01, 0.03, 0.09));
@@ -821,7 +967,10 @@ vec3 shade(vec2 p) {
   if (uMode < 7.5) return nebula(pos);
   if (uMode < 8.5) return snowflake(pos);
   if (uMode < 9.5) return soap(pos);
-  return crystal(pos, uVar) * uJ.y;
+  if (uMode < 10.5) return crystal(pos, uVar) * uJ.y;
+  if (uMode < 11.5) return imCave(pos);
+  if (uMode < 12.5) return imLand(pos);
+  return imWarp(pos);
 }
 
 void main() {
@@ -848,7 +997,7 @@ try { prog = program(FS); } catch(e){ fail('描画の準備に失敗しました
 gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,3,-1,-1,3]), gl.STATIC_DRAW);
 gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
-const U = {}; ['uRes','uCenter','uJ','uScale','uRot','uShift','uIter','uMode','uA','uB','uC','uD','uTime','uRef','uRefLen','uAA','uVar']
+const U = {}; ['uRes','uCenter','uJ','uScale','uRot','uShift','uIter','uMode','uA','uB','uC','uD','uTime','uRef','uRefLen','uAA','uVar','uLook']
   .forEach(k => U[k] = gl.getUniformLocation(prog,k));
 gl.useProgram(prog); gl.uniform1i(U.uRef, 1);
 
@@ -894,6 +1043,9 @@ const PATTERNS = [
   {name:'宝石の城（立体フラクタル）', sm:10},
   {name:'4次元の立体', sm:-1},
   {name:'光の群れ', sm:-1},
+  {name:'光る洞窟を飛ぶ', sm:11},
+  {name:'夕暮れの大地を飛ぶ', sm:12},
+  {name:'ワープ航行', sm:13},
 ];
 // [名前, 実部, 虚部, 潜る深さ]：どれも奥に小さなマンデルブロ集合がある点
 const TARGETS = [
@@ -1412,6 +1564,86 @@ const flock = (() => {
   };
 })();
 
+// ───────── 環境音：その場で計算して作り、つなぎ目なくループさせて鳴らす ─────────
+const Sound = (() => {
+  const SR = 22050, LEN = 24, N = SR * LEN;
+  const q = f => Math.round(f * LEN) / LEN;   // ループの長さで割り切れる周波数に丸める
+  const TAU = Math.PI * 2;
+  function rng(seed) { let x = seed; return () => { x = (Math.imul(x, 1103515245) + 12345) & 0x7fffffff; return x / 0x7fffffff; }; }
+  function normalize(x, peak) { let m = 1e-9; for (let i = 0; i < x.length; i++) m = Math.max(m, Math.abs(x[i])); for (let i = 0; i < x.length; i++) x[i] = x[i] / m * peak; }
+  function noiseLoop(seed, cutoff) {
+    const F = SR, M = N + F, r = rng(seed), y = new Float32Array(M); let s = 0;
+    for (let i = 0; i < M; i++) { const a = 1 - Math.exp(-TAU * Math.max(20, cutoff(i / SR)) / SR); s += a * (r() * 2 - 1 - s); y[i] = s; }
+    const out = y.slice(0, N);
+    for (let i = 0; i < F; i++) { const k = i / F; out[i] = y[N + i] * Math.sqrt(1 - k) + y[i] * Math.sqrt(k); }
+    return out;
+  }
+  function pad() {
+    const notes = [110, 164.81, 220, 261.63, 329.63, 392], x = new Float32Array(N);
+    notes.forEach((f, k) => { const f1 = q(f), f2 = q(f * 1.004), m = 1 + k % 3;
+      for (let i = 0; i < N; i++) { const t = i / SR, env = 0.5 + 0.5 * Math.sin(TAU * m * t / LEN + k * 1.3);
+        x[i] += (Math.sin(TAU * f1 * t) + 0.6 * Math.sin(TAU * f2 * t)) * env / (1 + k * 0.35); } });
+    normalize(x, 0.5); return x;
+  }
+  function wind() {
+    const n = noiseLoop(7, t => 420 + 220 * Math.sin(TAU * 2 * t / LEN) + 120 * Math.sin(TAU * 5 * t / LEN)); normalize(n, 1);
+    const x = new Float32Array(N), a = q(55), b = q(82.4);
+    for (let i = 0; i < N; i++) { const t = i / SR, gust = 0.55 + 0.45 * Math.sin(TAU * 3 * t / LEN) * Math.sin(TAU * t / LEN + 0.7);
+      x[i] = n[i] * gust + (0.25 * Math.sin(TAU * a * t) + 0.18 * Math.sin(TAU * b * t)) * 0.5; }
+    normalize(x, 0.6); return x;
+  }
+  function cave() {
+    const x = new Float32Array(N), a = q(55), b = q(82.4), c = q(110.3);
+    for (let i = 0; i < N; i++) { const t = i / SR;
+      x[i] = Math.sin(TAU * a * t) + 0.7 * Math.sin(TAU * b * t) * (0.6 + 0.4 * Math.sin(TAU * 2 * t / LEN)) + 0.3 * Math.sin(TAU * c * t); }
+    normalize(x, 0.35);
+    const rum = noiseLoop(11, () => 120); normalize(rum, 0.12); for (let i = 0; i < N; i++) x[i] += rum[i];
+    const r = rng(5), dl = Math.round(SR * 0.6);   // 水滴の音と、洞窟の壁から返ってくる響き
+    for (let k = 0; k < 18; k++) { const st = Math.floor(r() * N), f = 1300 + r() * 1300, amp = (0.5 + 0.5 * r()) * 0.35;
+      for (const [d, g] of [[0, 1], [0.13, 0.4], [0.27, 0.2], [0.41, 0.1]]) { const off = st + Math.round(d * SR);
+        for (let j = 0; j < dl; j++) { const tt = j / SR; x[(off + j) % N] += Math.sin(TAU * (f * tt - 300 * tt * tt)) * Math.exp(-tt * 14) * amp * g; } } }
+    normalize(x, 0.6); return x;
+  }
+  function warp() {
+    const x = new Float32Array(N), hs = [1,2,3,4,5,6,7,8].map(h => q(55 * h)), s1 = q(880), s2 = q(1320);
+    for (let i = 0; i < N; i++) { const t = i / SR, b = 0.5 + 0.5 * Math.sin(TAU * 2 * t / LEN); let v = 0;
+      for (let h = 1; h <= 8; h++) v += Math.sin(TAU * hs[h - 1] * t) / h * Math.exp(-h * (1.5 - b) * 0.6); x[i] = v; }
+    normalize(x, 0.5);
+    const wh = noiseLoop(3, t => 900 + 700 * Math.sin(TAU * 3 * t / LEN)); normalize(wh, 0.25);
+    for (let i = 0; i < N; i++) { const t = i / SR, sh = (0.3 * Math.sin(TAU * s1 * t) + 0.2 * Math.sin(TAU * s2 * t)) * (0.5 + 0.5 * Math.sin(TAU * 12 * t / LEN));
+      x[i] += wh[i] * (0.6 + 0.4 * Math.sin(TAU * 3 * t / LEN)) + sh * 0.15; }
+    normalize(x, 0.6); return x;
+  }
+  const MAKERS = [pad, wind, cave, warp];
+  let ctx = null, on = false, cur = -1, src = null, gain = null; const cache = {};
+  function fadeOut(now) {
+    if (!gain) return; const g = gain, s = src;
+    g.gain.cancelScheduledValues(now); g.gain.setValueAtTime(g.gain.value, now); g.gain.linearRampToValueAtTime(0, now + 0.6);
+    setTimeout(() => { try { s.stop(); } catch (e) {} }, 700);
+    gain = null; src = null;
+  }
+  function play(kind) {
+    if (!cache[kind]) { const data = MAKERS[kind](); const b = ctx.createBuffer(1, N, SR); b.copyToChannel(data, 0); cache[kind] = b; }
+    const now = ctx.currentTime; fadeOut(now);
+    gain = ctx.createGain(); gain.gain.setValueAtTime(0, now); gain.gain.linearRampToValueAtTime(0.8, now + 0.8); gain.connect(ctx.destination);
+    src = ctx.createBufferSource(); src.buffer = cache[kind]; src.loop = true; src.connect(gain); src.start(); cur = kind;
+  }
+  return {
+    get on() { return on; },
+    toggle(kind) {
+      try { if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
+      on = !on;
+      if (on) { const r = ctx.resume(); if (r && r.catch) r.catch(() => {}); cur = -1; play(kind); }
+      else { fadeOut(ctx.currentTime); cur = -1; }
+    },
+    setScape(kind) { if (on && ctx && kind !== cur) play(kind); },
+  };
+})();
+
+// 見回せる模様（宝石の城と3つの景色）と、模様に合う環境音（0=静かな和音 1=風 2=洞窟 3=ワープ）
+const usesLook = i => i===16 || i>=19;
+const scapeFor = i => i===19 ? 2 : (i===20 ? 1 : (i===21 ? 3 : 0));
+const LOOK = {x:0, y:0, tx:0, ty:0, drag:false};
 const CPU = {3:phyllo, 4:rd, 5:(attractorMT || attractor), 6:rose, 8:penrose, 9:lsys, 17:poly4, 18:flock};
 const useRdGPU = () => rdGPU && rdGPU.ok;
 
@@ -1514,11 +1746,16 @@ function frame(now){
     gl.uniform2f(U.uRes,glc.width,glc.height); gl.uniform2f(U.uCenter,S.cx,S.cy);
     if(hasVariants()) gl.uniform2f(U.uJ,kSegs(),kDim());
     else gl.uniform2f(U.uJ,JR*Math.cos(S.jAngle),JR*Math.sin(S.jAngle));
-    gl.uniform1f(U.uScale,scale); gl.uniform1f(U.uRot,S.rot); gl.uniform1f(U.uShift,S.shift);
+    gl.uniform1f(U.uScale,scale); gl.uniform1f(U.uRot,S.pattern>=19?0:S.rot); gl.uniform1f(U.uShift,S.shift);
+    gl.uniform2f(U.uLook,LOOK.x,LOOK.y);
     gl.uniform1f(U.uIter,iter); gl.uniform1f(U.uMode,sm); gl.uniform1f(U.uTime,S.ptime); gl.uniform1i(U.uAA,aa); gl.uniform1f(U.uVar,kVar());
     gl.uniform3fv(U.uA,P.a); gl.uniform3fv(U.uB,P.b); gl.uniform3fv(U.uC,P.c); gl.uniform3fv(U.uD,P.d);
     gl.drawArrays(gl.TRIANGLES,0,3);
   }
+  // 見回す向き：ドラッグをやめると、ゆっくり正面に戻る
+  if(!LOOK.drag){ const k=Math.exp(-raw*0.6); LOOK.tx*=k; LOOK.ty*=k; }
+  const lf=Math.min(1,raw*6); LOOK.x+=(LOOK.tx-LOOK.x)*lf; LOOK.y+=(LOOK.ty-LOOK.y)*lf;
+  Sound.setScape(scapeFor(S.pattern));
   updateInfo();
   requestAnimationFrame(frame);
 }
@@ -1543,6 +1780,7 @@ function updateInfo(){
   else if(S.pattern===11){ place='万華鏡：'+K_NAMES[kVar()]; det=`${K_DESCS[kVar()]}（${kVar()+1}/${K_NAMES.length}）${S.kHold?'・ずっと表示中':''}`; }
   else if(S.pattern===4 && useRdGPU()) det='2つの物質が広がりながら反応する';
   else if(S.pattern===16){ place = kVar()===0 ? '宝石の城' : '宝石の城：'+C_NAMES[kVar()]; det=`${C_DESCS[kVar()]}（${kVar()+1}/${C_NAMES.length}）${S.kHold?'・ずっと表示中':''}`; }
+  else if(S.pattern>=19){ det=['曲がりくねった洞窟を、体を傾けながら進む','夕日に向かって、山と湖の上を低空で飛ぶ','星が光の筋になって、中心から外へ流れ去る'][S.pattern-19]+'（ドラッグで見回せる）'; }
   else if(S.pattern>=12 && S.pattern<=16) det=['水面で曲がった光が、底に揺れる網目を描く','色とりどりのガスと星の中を、奥へ奥へと進む','6方向に枝を伸ばして育つ（約24秒ごとに新しい結晶）','薄い膜に光が干渉して、虹色が流れる','メンガーのスポンジが並ぶ街を飛び抜ける'][S.pattern-12];
   else det=CPU[S.pattern].detail(S.ptime);
   if(sm>=0) q=`GPUで描画 ${glc.width}×${glc.height}・1画素を${aa*aa}回計算`;
@@ -1582,6 +1820,7 @@ function openMenu(){ buildMenu(); menuOpen=true; $('menu').classList.add('open')
 function closeMenu(){ menuOpen=false; $('menu').classList.remove('open'); }
 $('menu').addEventListener('pointerdown',e=>e.stopPropagation());
 on($('bMenu'), ()=> menuOpen ? closeMenu() : openMenu());
+on($('bSound'), ()=>{ Sound.toggle(scapeFor(S.pattern)); $('bSound').textContent = Sound.on ? '音：オン' : '音：オフ'; });
 on($('bHold'), ()=>{ S.kHold=!S.kHold; });
 on($('bColor'), ()=>{ S.palFrom=curPal(); S.palIdx=(S.palIdx+1)%PALETTES.length; S.palT=0; });
 const SPEEDS=[1,2,4,0.5]; let sIdx=0;
@@ -1603,10 +1842,11 @@ addEventListener('pointerdown',e=>{ if(menuOpen){ closeMenu(); return; } ptrs.se
 addEventListener('pointermove',e=>{ if(!ptrs.has(e.pointerId)) return;
   const p=ptrs.get(e.pointerId), dx=e.clientX-p.x, dy=e.clientY-p.y; moved+=Math.abs(dx)+Math.abs(dy);
   if(moved<6) return; showUI(); p.x=e.clientX; p.y=e.clientY;
+  if(usesLook(S.pattern)){ LOOK.drag=true; LOOK.tx=Math.max(-0.9,Math.min(0.9,LOOK.tx-dx*0.004)); LOOK.ty=Math.max(-0.7,Math.min(0.7,LOOK.ty-dy*0.003)); return; }
   if(!PATTERNS[S.pattern].g) return; manual();
   if(ptrs.size===1){ const d=toComplex(dx,dy); S.cx-=d[0]; S.cy-=d[1]; }
   if(ptrs.size===2&&pinch0){ const [a,b]=[...ptrs.values()], d=Math.hypot(a.x-b.x,a.y-b.y); zoomBy(d/pinch0); pinch0=d; } });
-const up=e=>{ ptrs.delete(e.pointerId); if(ptrs.size<2) pinch0=null; if(moved<6&&ptrs.size===0) showUI(); };
+const up=e=>{ LOOK.drag=false; ptrs.delete(e.pointerId); if(ptrs.size<2) pinch0=null; if(moved<6&&ptrs.size===0) showUI(); };
 addEventListener('pointerup',up); addEventListener('pointercancel',up);
 addEventListener('wheel',e=>{ e.preventDefault(); showUI(); if(!PATTERNS[S.pattern].g) return; manual(); zoomBy(Math.exp(-e.deltaY*0.0015)); },{passive:false});
 
