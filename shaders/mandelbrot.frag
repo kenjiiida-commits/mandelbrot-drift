@@ -460,6 +460,223 @@ vec3 kaleido(vec2 p) {
   return c * uJ.y;
 }
 
+// ═══════ 自然の光と立体の模様（万華鏡の部品 kfold・rot2・hash2・fbm・jewel を使う） ═══════
+
+// ── 水の底でゆらめく光：水面で曲がった光が、底に網目の模様を作る ──
+float causticLayer(vec2 p, float t) {
+  p += 0.35 * vec2(sin(p.y * 1.3 + t * 0.7), cos(p.x * 1.1 - t * 0.6));
+  vec2 g = floor(p);
+  vec2 f = fract(p);
+  float d1 = 9.0;
+  float d2 = 9.0;
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2 o = vec2(float(i), float(j));
+      vec2 h = hash2(g + o);
+      vec2 r = o + 0.5 + 0.4 * sin(t * 0.8 + 6.2831 * h) - f;
+      float d = dot(r, r);
+      if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) { d2 = d; }
+    }
+  }
+  return sqrt(d2) - sqrt(d1);
+}
+
+vec3 water(vec2 p) {
+  float t = uTime * 0.6;
+  vec2 q = p * 2.6;
+  float e1 = causticLayer(q, t);
+  float e2 = causticLayer(q * 1.37 + vec2(3.1, 7.7), -t * 0.83);
+  float light = exp(-e1 * 9.0) * 0.8 + exp(-e2 * 11.0) * 0.6 + exp(-min(e1, e2) * 30.0) * 0.8;
+  float depth = 0.5 + 0.5 * p.y;
+  vec3 deep = mix(vec3(0.0, 0.12, 0.28), vec3(0.0, 0.35, 0.42), depth);
+  vec3 col = deep + vec3(0.45, 0.95, 0.9) * light * (0.55 + 0.45 * depth);
+  // 斜めに差し込む光の筋
+  float ray = 0.0;
+  for (int i = 0; i < 4; i++) {
+    float fi = float(i);
+    ray += pow(0.5 + 0.5 * sin((p.x + p.y * 0.35) * (3.0 + fi * 1.7) + uTime * (0.2 + 0.07 * fi) + fi * 2.0), 8.0);
+  }
+  col += vec3(0.3, 0.6, 0.6) * ray * 0.12 * (0.3 + depth);
+  // 漂う小さな粒
+  vec2 z = p * 6.0 + vec2(0.0, uTime * 0.15);
+  vec2 h = hash2(floor(z));
+  float dot_ = length(fract(z) - 0.5 - (h - 0.5) * 0.6);
+  col += vec3(0.6, 1.0, 0.95) * exp(-dot_ * dot_ * 900.0) * step(0.75, h.x) * 0.8;
+  return col;
+}
+
+// ── 星雲の中を飛ぶ：色とりどりのガスの層が、手前へ流れ去っていく ──
+vec3 nebula(vec2 p) {
+  vec3 col = vec3(0.0, 0.0, 0.015);
+  for (int i = 0; i < 5; i++) {
+    float fi = float(i);
+    float ph = fi * 0.2 + uTime * 0.035;
+    float z = fract(ph);
+    float cyc = floor(ph);
+    float fade = smoothstep(0.0, 0.3, z) * (1.0 - smoothstep(0.75, 1.0, z));
+    float sc = mix(3.5, 0.35, z);
+    vec2 q = rot2(p, fi * 1.7 + cyc * 2.3) * sc + vec2(fi * 7.3 + cyc * 3.1, cyc * 5.7);
+    float n = fbm(q + 1.6 * vec2(fbm(q * 0.6 + fi), fbm(q * 0.6 - fi)));
+    float hsel = hash(fi * 3.7 + cyc * 11.3);
+    vec3 c = hsel < 0.25 ? vec3(0.15, 0.4, 1.0) : (hsel < 0.5 ? vec3(0.1, 0.9, 0.6) : (hsel < 0.75 ? vec3(0.75, 0.25, 0.95) : vec3(1.0, 0.45, 0.35)));
+    col += c * pow(n, 3.0) * 2.2 * fade;
+  }
+  // 手前へ飛んでくる星
+  for (int l = 0; l < 3; l++) {
+    float fl = float(l);
+    float z = fract(fl / 3.0 + uTime * 0.08);
+    vec2 q = p * mix(10.0, 1.2, z) + fl * 17.0;
+    vec2 h = hash2(floor(q) + fl * 5.0);
+    float d = length(fract(q) - 0.5 - (h - 0.5) * 0.7);
+    float a = smoothstep(0.0, 0.2, z) * (1.0 - smoothstep(0.85, 1.0, z));
+    col += vec3(0.85, 0.92, 1.0) * (exp(-d * d * 400.0) * 1.5 + 0.004 / (d + 0.01)) * a * step(0.55, h.x);
+  }
+  return col;
+}
+
+// ── 雪の結晶が育つ：6方向に伸びる枝から、さらに枝が育つ（約24秒ごとに新しい結晶） ──
+float segDist(vec2 p, vec2 a, vec2 b) {
+  vec2 pa = p - a;
+  vec2 ba = b - a;
+  float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+  return length(pa - ba * h);
+}
+
+vec3 snowflake(vec2 p) {
+  p /= min(1.0, uRes.x / uRes.y);   // 縦長の画面でも結晶が横幅に収まるように
+  float period = 24.0;
+  float cyc = floor(uTime / period);
+  float age = uTime / period - cyc;
+  float R = 0.92 * smoothstep(0.0, 0.8, age);
+  float fadeOut = 1.0 - smoothstep(0.9, 1.0, age);
+  float seed = cyc * 7.31;
+  vec2 q = kfold(rot2(p, cyc * 0.4), 6.0);  // 12枚の鏡で6回対称
+  float d = abs(q.y) + max(q.x - R, 0.0);          // 中心から伸びる主軸
+  float hexR = 0.08 + 0.05 * hash(seed);
+  d = min(d, max(q.x * 0.866 + q.y * 0.5, q.x) - hexR);  // 中心の六角板
+  for (int k = 1; k <= 9; k++) {
+    float fk = float(k);
+    float x0 = fk * (0.075 + 0.025 * hash(seed + 1.0));
+    float grow = max(R - x0, 0.0);
+    float len = min(grow * (0.45 + 0.35 * hash(seed + fk * 3.1)), 0.32 * (1.0 - fk / 11.0));
+    vec2 a = vec2(x0, 0.0);
+    if (len < 0.002) continue;   // まだ伸びていない枝は描かない
+    vec2 b = a + len * vec2(0.5, 0.866);
+    d = min(d, segDist(q, a, b));
+    // 枝の枝
+    for (int m = 1; m <= 2; m++) {
+      float fm = float(m);
+      vec2 c = a + (b - a) * (0.35 * fm);
+      float l2 = len * (0.55 - 0.18 * fm) * (0.6 + 0.6 * hash(seed + fk + fm * 9.0));
+      if (l2 > 0.002) d = min(d, segDist(q, c, c + l2 * vec2(1.0, 0.0)));
+    }
+  }
+  float w = 0.006 + 0.004 * hash(seed + 5.0);
+  float ice = 1.0 - smoothstep(w, w + 0.006, d);
+  float glow = exp(-d * 35.0);
+  vec3 bg = mix(vec3(0.01, 0.03, 0.12), vec3(0.02, 0.1, 0.25), 0.5 + 0.5 * p.y);
+  vec3 col = bg + vec3(0.35, 0.65, 1.0) * glow * 0.5 * fadeOut;
+  vec3 iceCol = mix(vec3(0.75, 0.9, 1.0), vec3(1.0), 0.5 + 0.5 * sin(d * 300.0 + uTime));
+  col = mix(col, iceCol, ice * fadeOut);
+  float spark = pow(max(0.0, sin(q.x * 40.0 - uTime * 3.0)), 30.0) * ice;
+  return col + vec3(1.0) * spark * fadeOut;
+}
+
+// ── シャボン玉：薄い膜に光が干渉して虹色が流れる ──
+vec4 bubble(vec2 p, vec2 c, float R, float seed) {
+  vec2 q = (p - c) / R;
+  float r2 = dot(q, q);
+  if (r2 > 1.0) return vec4(0.0);
+  float zz = sqrt(1.0 - r2);
+  vec2 w = rot2(q, uTime * 0.07 + seed) * 1.8;
+  float th = fbm(w * 1.3 + 1.8 * vec2(fbm(w + uTime * 0.06 + seed), fbm(w * 1.2 - uTime * 0.05)))
+           + (q.y + 1.0) * 0.35;
+  vec3 film = 0.5 + 0.5 * cos(6.2831853 * (th * 2.6 + vec3(0.0, 0.33, 0.67)));
+  float fres = pow(1.0 - zz, 1.6);
+  vec3 col = film * (0.32 + 0.8 * fres);
+  float spec = pow(max(0.0, dot(normalize(vec3(q, zz)), normalize(vec3(-0.5, 0.6, 0.6)))), 60.0);
+  col += vec3(1.0) * spec * 0.9;
+  float edge = smoothstep(0.92, 1.0, sqrt(r2));
+  return vec4(col + film * edge * 0.5, 0.25 + 0.6 * fres);
+}
+
+vec3 soap(vec2 p) {
+  p /= min(1.0, uRes.x / uRes.y);   // 縦長の画面でも大きな泡が横幅に収まるように
+  vec3 col = mix(vec3(0.0, 0.01, 0.04), vec3(0.02, 0.04, 0.1), 0.5 + 0.5 * p.y);
+  for (int i = 0; i < 4; i++) {
+    float fi = float(i);
+    float R = i == 0 ? 0.62 : 0.14 + 0.1 * hash(fi * 3.3);
+    vec2 c = i == 0 ? vec2(0.03 * sin(uTime * 0.2), 0.04 * cos(uTime * 0.17))
+                    : vec2(0.75 * sin(uTime * 0.05 * (1.0 + fi) + fi * 2.1), mod(uTime * 0.04 * (1.0 + 0.3 * fi) + fi * 0.7, 2.6) - 1.3);
+    vec4 b = bubble(p, c, R, fi * 4.1);
+    col = col * (1.0 - b.a * 0.35) + b.rgb * b.a;
+  }
+  return col;
+}
+
+// ── 宝石の城：立体フラクタル（メンガーのスポンジ）の間を飛ぶ ──
+float boxDist(vec3 p, vec3 b) {
+  vec3 q = abs(p) - b;
+  return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+float sponge(vec3 p) {
+  float d = boxDist(p, vec3(1.0));
+  float s = 1.0;
+  for (int m = 0; m < 4; m++) {
+    vec3 a = mod(p * s, 2.0) - 1.0;
+    s *= 3.0;
+    vec3 r = abs(1.0 - 3.0 * abs(a));
+    float c = (min(max(r.x, r.y), min(max(r.y, r.z), max(r.z, r.x))) - 1.0) / s;
+    d = max(d, c);
+  }
+  return d;
+}
+
+float cityDE(vec3 p) {
+  vec3 q = mod(p + 1.0, 2.0) - 1.0;     // 2ごとに並べる
+  return sponge(q / 0.62) * 0.62;
+}
+
+vec3 crystal(vec2 p) {
+  float t = uTime * 0.5;
+  vec3 ro = vec3(1.0 + 0.18 * sin(t * 0.37), 1.0 + 0.18 * cos(t * 0.29), t);
+  vec3 rd = normalize(vec3(p, 1.5));
+  rd.xy = rot2(rd.xy, t * 0.1);
+  rd.xz = rot2(rd.xz, 0.25 * sin(t * 0.21));
+  rd.yz = rot2(rd.yz, 0.2 * sin(t * 0.17));
+  float dist = 0.0;
+  float steps = 0.0;
+  bool hit = false;
+  for (int i = 0; i < 90; i++) {
+    float d = cityDE(ro + rd * dist);
+    if (d < 0.0012 * dist) { hit = true; break; }
+    dist += d * 0.9;
+    steps += 1.0;
+    if (dist > 14.0) break;
+  }
+  vec3 fogCol = vec3(0.01, 0.03, 0.09);
+  vec3 col = fogCol;
+  if (hit) {
+    vec3 pos = ro + rd * dist;
+    vec2 e = vec2(0.0015, 0.0);
+    vec3 n = normalize(vec3(cityDE(pos + e.xyy) - cityDE(pos - e.xyy),
+                            cityDE(pos + e.yxy) - cityDE(pos - e.yxy),
+                            cityDE(pos + e.yyx) - cityDE(pos - e.yyx)));
+    vec3 cell = floor((pos + 1.0) / 2.0);
+    vec3 base = jewel(hash(dot(cell, vec3(1.7, 3.1, 5.3))) + uShift * 0.2);
+    vec3 L = normalize(vec3(0.4, 0.7, -0.5));
+    float dif = max(dot(n, L), 0.0);
+    float spec = pow(max(dot(reflect(rd, n), L), 0.0), 40.0);
+    float ao = 1.0 - steps / 90.0;
+    col = base * (0.15 + 0.85 * dif) * ao * 1.4 + vec3(0.9, 1.0, 1.0) * spec * 0.8;
+    col += base * pow(1.0 - abs(dot(n, rd)), 3.0) * 0.6;
+    col = mix(fogCol, col, exp(-dist * 0.18));
+  }
+  col += vec3(0.1, 0.35, 0.6) * (steps / 90.0) * 0.35;  // 縁のほのかな光
+  return col;
+}
+
 vec3 escapeTime(vec2 pos) {
   vec2 z;
   vec2 c;
@@ -519,11 +736,17 @@ void main() {
   vec2 pos = uCenter + p * uScale;
 
   // 0,1=マンデルブロ・ジュリア 2=ニュートン法 3=波の干渉 4=ボロノイ図 5=万華鏡
+  // 6=水の底の光 7=星雲 8=雪の結晶 9=シャボン玉 10=宝石の城
   vec3 col;
   if (uMode < 1.5) col = escapeTime(pos);
   else if (uMode < 2.5) col = newton(pos);
   else if (uMode < 3.5) col = waves(pos);
   else if (uMode < 4.5) col = voronoi(pos);
-  else col = kaleido(pos);
+  else if (uMode < 5.5) col = kaleido(pos);
+  else if (uMode < 6.5) col = water(pos);
+  else if (uMode < 7.5) col = nebula(pos);
+  else if (uMode < 8.5) col = snowflake(pos);
+  else if (uMode < 9.5) col = soap(pos);
+  else col = crystal(pos);
   fragColor = vec4(pow(clamp(col, 0.0, 1.0), vec3(0.95)), 1.0);
 }

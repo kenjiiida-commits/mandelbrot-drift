@@ -629,3 +629,370 @@ class LSystem extends CpuPattern {
   @override
   String detail(double t) => lDefs[_index(t)].name;
 }
+
+// ───────────── 4次元の立体：4次元で回して、3次元、さらに画面へと影を落とす ─────────────
+
+class _Shape4 {
+  _Shape4(this.name, this.v, this.e);
+  final String name;
+  final List<List<double>> v;
+  final List<int> e;
+}
+
+class Poly4 extends CpuPattern {
+  Poly4() {
+    _shapes = [
+      _build('超立方体（正八胞体）', _tesseract()),
+      _build('正二十四胞体', _cell24()),
+      _build('正六百胞体', _cell600()),
+    ];
+  }
+
+  late final List<_Shape4> _shapes;
+  static const double _cyc = 30;
+
+  static List<List<double>> _tesseract() => List.generate(
+      16,
+      (i) => [
+            (i & 1) != 0 ? 1.0 : -1.0,
+            (i & 2) != 0 ? 1.0 : -1.0,
+            (i & 4) != 0 ? 1.0 : -1.0,
+            (i & 8) != 0 ? 1.0 : -1.0,
+          ]);
+
+  static List<List<double>> _cell24() {
+    final v = <List<double>>[];
+    for (var a = 0; a < 4; a++) {
+      for (var b = a + 1; b < 4; b++) {
+        for (final sa in [-1.0, 1.0]) {
+          for (final sb in [-1.0, 1.0]) {
+            final p = [0.0, 0.0, 0.0, 0.0];
+            p[a] = sa;
+            p[b] = sb;
+            v.add(p);
+          }
+        }
+      }
+    }
+    return v;
+  }
+
+  static List<List<double>> _cell600() {
+    const phi = 1.6180339887;
+    final v = <List<double>>[];
+    for (var a = 0; a < 4; a++) {
+      for (final s in [-1.0, 1.0]) {
+        final p = [0.0, 0.0, 0.0, 0.0];
+        p[a] = s;
+        v.add(p);
+      }
+    }
+    for (var i = 0; i < 16; i++) {
+      v.add([
+        (i & 1) != 0 ? 0.5 : -0.5,
+        (i & 2) != 0 ? 0.5 : -0.5,
+        (i & 4) != 0 ? 0.5 : -0.5,
+        (i & 8) != 0 ? 0.5 : -0.5,
+      ]);
+    }
+    const base = [phi / 2, 0.5, 1 / (2 * phi), 0.0];
+    final perms = <List<int>>[];
+    void perm(List<int> arr, int k) {
+      if (k == 4) {
+        perms.add(List.of(arr));
+        return;
+      }
+      for (var i = k; i < 4; i++) {
+        var t = arr[k];
+        arr[k] = arr[i];
+        arr[i] = t;
+        perm(arr, k + 1);
+        t = arr[k];
+        arr[k] = arr[i];
+        arr[i] = t;
+      }
+    }
+
+    perm([0, 1, 2, 3], 0);
+    for (final pm in perms) {
+      var inv = 0;
+      for (var i = 0; i < 4; i++) {
+        for (var j = i + 1; j < 4; j++) {
+          if (pm[i] > pm[j]) inv++;
+        }
+      }
+      if (inv % 2 == 1) continue; // 偶置換だけを使う
+      for (var sg = 0; sg < 8; sg++) {
+        final p = [0.0, 0.0, 0.0, 0.0];
+        for (var k = 0; k < 3; k++) {
+          p[pm[k]] = base[k] * (((sg >> k) & 1) != 0 ? -1 : 1);
+        }
+        v.add(p);
+      }
+    }
+    return v;
+  }
+
+  static double _dist(List<double> a, List<double> b) {
+    var s = 0.0;
+    for (var k = 0; k < 4; k++) {
+      s += (a[k] - b[k]) * (a[k] - b[k]);
+    }
+    return math.sqrt(s);
+  }
+
+  static _Shape4 _build(String name, List<List<double>> v0) {
+    var r = 0.0;
+    for (final x in v0[0]) {
+      r += x * x;
+    }
+    r = math.sqrt(r);
+    final v = [for (final p in v0) [for (final x in p) x / r]];
+    var min = double.infinity;
+    for (var i = 0; i < v.length; i++) {
+      for (var j = i + 1; j < v.length; j++) {
+        final d = _dist(v[i], v[j]);
+        if (d > 1e-6 && d < min) min = d;
+      }
+    }
+    final e = <int>[];
+    for (var i = 0; i < v.length; i++) {
+      for (var j = i + 1; j < v.length; j++) {
+        if ((_dist(v[i], v[j]) - min).abs() < 1e-3) {
+          e
+            ..add(i)
+            ..add(j);
+        }
+      }
+    }
+    return _Shape4(name, v, e);
+  }
+
+  int _idx(double t) => (t / _cyc).floor() % _shapes.length;
+
+  @override
+  void paint(Canvas canvas, Size size, Palette pal, double shift, double t) {
+    canvas.drawRect(Offset.zero & size, Paint()..color = kBg);
+    final s = _shapes[_idx(t)];
+    final fr = t / _cyc - (t / _cyc).floor();
+    final al = math.min(1.0, math.min(fr * 6, (1 - fr) * 6));
+    final a1 = t * 0.31, a2 = t * 0.23, a3 = t * 0.11, a4 = t * 0.17;
+    final c1 = math.cos(a1), s1 = math.sin(a1), c2 = math.cos(a2), s2 = math.sin(a2);
+    final c3 = math.cos(a3), s3 = math.sin(a3), c4 = math.cos(a4), s4 = math.sin(a4);
+    final n = s.v.length;
+    final sx = Float64List(n), sy = Float64List(n), sw = Float64List(n), sz = Float64List(n);
+    final big = math.min(size.width, size.height) * 2.4;
+    for (var i = 0; i < n; i++) {
+      var x = s.v[i][0], y = s.v[i][1], z = s.v[i][2], w = s.v[i][3];
+      // 4次元の回転（XW・YZ・XY・ZW の4つの面で回す）
+      var nx = c1 * x - s1 * w;
+      w = s1 * x + c1 * w;
+      x = nx;
+      final ny = c2 * y - s2 * z;
+      z = s2 * y + c2 * z;
+      y = ny;
+      nx = c3 * x - s3 * y;
+      y = s3 * x + c3 * y;
+      x = nx;
+      final nz = c4 * z - s4 * w;
+      w = s4 * z + c4 * w;
+      z = nz;
+      final k = 1 / (2.0 - w); // 4次元→3次元の遠近
+      final q = 1 / (3.0 - z * k); // 3次元→画面の遠近
+      sx[i] = size.width / 2 + x * k * q * big;
+      sy[i] = size.height / 2 + y * k * q * big;
+      sw[i] = w;
+      sz[i] = q;
+    }
+    const nb = 16;
+    final lists = List.generate(nb, (_) => <double>[]);
+    for (var k = 0; k < s.e.length; k += 2) {
+      final i = s.e[k], j = s.e[k + 1];
+      final b = math.max(0, math.min(nb - 1, (((sw[i] + sw[j]) / 2 + 1) / 2 * nb).floor()));
+      lists[b]
+        ..add(sx[i])
+        ..add(sy[i])
+        ..add(sx[j])
+        ..add(sy[j]);
+    }
+    final lw = n > 50 ? 0.6 : 1.0;
+    for (var b = 0; b < nb; b++) {
+      if (lists[b].isEmpty) continue;
+      final pts = Float32List.fromList(lists[b]);
+      final glow = Paint()
+        ..blendMode = BlendMode.plus
+        ..strokeCap = StrokeCap.round
+        ..strokeWidth = 7 * lw
+        ..color = palColor(pal, b / nb * 0.6 + shift, 1, 0.12 * al);
+      canvas.drawRawPoints(ui.PointMode.lines, pts, glow);
+      final core = Paint()
+        ..blendMode = BlendMode.plus
+        ..strokeCap = StrokeCap.round
+        ..strokeWidth = 1.6 * lw
+        ..color = palColor(pal, b / nb * 0.6 + shift, 1, 0.85 * al);
+      canvas.drawRawPoints(ui.PointMode.lines, pts, core);
+    }
+    final dot = Paint()..blendMode = BlendMode.plus;
+    for (var i = 0; i < n; i++) {
+      dot.color = palColor(pal, (sw[i] + 1) / 2 * 0.6 + shift + 0.3, 1, al);
+      canvas.drawCircle(Offset(sx[i], sy[i]), (n > 50 ? 1.6 : 3.2) * sz[i] * 2.2, dot);
+    }
+  }
+
+  @override
+  String detail(double t) {
+    final s = _shapes[_idx(t)];
+    return '${s.name}・頂点${s.v.length}個・辺${s.e.length ~/ 2}本';
+  }
+}
+
+// ───────────── 光の群れ：近くの仲間と「離れすぎず・ぶつからず・同じ向きに」で群れが生まれる ─────────────
+
+class Flock extends CpuPattern {
+  static const int _k = 8; // 光の尾の長さ（何フレーム分の位置を覚えるか）
+  static const double _cell = 40;
+  final _rnd = math.Random();
+  int _n = 0, _head = 0;
+  double _w0 = 0, _h0 = 0;
+  Float32List _px = Float32List(0), _py = Float32List(0), _vx = Float32List(0), _vy = Float32List(0);
+  Float32List _hx = Float32List(0), _hy = Float32List(0);
+  Int32List _grid = Int32List(0), _next = Int32List(0);
+
+  void _init(Size size) {
+    _w0 = size.width;
+    _h0 = size.height;
+    _n = math.min(1400, math.max(500, (size.width * size.height / 450).round()));
+    _px = Float32List(_n);
+    _py = Float32List(_n);
+    _vx = Float32List(_n);
+    _vy = Float32List(_n);
+    _hx = Float32List(_n * _k);
+    _hy = Float32List(_n * _k);
+    _next = Int32List(_n);
+    for (var i = 0; i < _n; i++) {
+      _px[i] = _rnd.nextDouble() * size.width;
+      _py[i] = _rnd.nextDouble() * size.height;
+      final a = _rnd.nextDouble() * 6.283;
+      _vx[i] = math.cos(a) * 80;
+      _vy[i] = math.sin(a) * 80;
+      for (var k = 0; k < _k; k++) {
+        _hx[i * _k + k] = _px[i];
+        _hy[i * _k + k] = _py[i];
+      }
+    }
+  }
+
+  @override
+  void reset() {
+    _n = 0;
+  }
+
+  @override
+  void update(double dt, double t, Palette pal, double shift, Size size) {
+    if (size.isEmpty) return;
+    if (_n == 0 || (size.width - _w0).abs() > 2 || (size.height - _h0).abs() > 2) _init(size);
+    if (dt <= 0) return;
+    final w = size.width, h = size.height;
+    final gw = (w / _cell).ceil() + 1, gh = (h / _cell).ceil() + 1;
+    if (_grid.length != gw * gh) _grid = Int32List(gw * gh);
+    _grid.fillRange(0, _grid.length, -1);
+    for (var i = 0; i < _n; i++) {
+      final gx = math.min(gw - 1, math.max(0, (_px[i] / _cell).floor()));
+      final gy = math.min(gh - 1, math.max(0, (_py[i] / _cell).floor()));
+      final g = gy * gw + gx;
+      _next[i] = _grid[g];
+      _grid[g] = i;
+    }
+    // 群れが目指す点（ゆっくり8の字を描く）
+    final tx = w / 2 + w * 0.3 * math.sin(t * 0.23), ty = h / 2 + h * 0.28 * math.sin(t * 0.37);
+    final st = math.min(dt, 0.05);
+    for (var i = 0; i < _n; i++) {
+      var ax = 0.0, ay = 0.0, cx = 0.0, cy = 0.0, sx = 0.0, sy = 0.0;
+      var cnt = 0;
+      final gx = (_px[i] / _cell).floor(), gy = (_py[i] / _cell).floor();
+      for (var oy = -1; oy <= 1; oy++) {
+        for (var ox = -1; ox <= 1; ox++) {
+          final x = gx + ox, y = gy + oy;
+          if (x < 0 || y < 0 || x >= gw || y >= gh) continue;
+          for (var j = _grid[y * gw + x]; j >= 0; j = _next[j]) {
+            if (j == i) continue;
+            final dx = _px[j] - _px[i], dy = _py[j] - _py[i], d2 = dx * dx + dy * dy;
+            if (d2 > _cell * _cell) continue;
+            ax += _vx[j];
+            ay += _vy[j];
+            cx += dx;
+            cy += dy;
+            cnt++;
+            if (d2 < 400) {
+              sx -= dx / (d2 + 1);
+              sy -= dy / (d2 + 1);
+            }
+          }
+        }
+      }
+      var fx = 0.0, fy = 0.0;
+      if (cnt > 0) {
+        fx += (ax / cnt - _vx[i]) * 2.5 + cx / cnt * 1.5;
+        fy += (ay / cnt - _vy[i]) * 2.5 + cy / cnt * 1.5;
+      }
+      fx += sx * 900 + (tx - _px[i]) * 0.22;
+      fy += sy * 900 + (ty - _py[i]) * 0.22;
+      const m = 40.0;
+      if (_px[i] < m) fx += (m - _px[i]) * 6;
+      if (_px[i] > w - m) fx -= (_px[i] - w + m) * 6;
+      if (_py[i] < m) fy += (m - _py[i]) * 6;
+      if (_py[i] > h - m) fy -= (_py[i] - h + m) * 6;
+      _vx[i] += fx * st;
+      _vy[i] += fy * st;
+      final sp = math.sqrt(_vx[i] * _vx[i] + _vy[i] * _vy[i]);
+      final lim = math.min(170.0, math.max(60.0, sp));
+      if (sp > 0) {
+        _vx[i] *= lim / sp;
+        _vy[i] *= lim / sp;
+      }
+    }
+    _head = (_head + 1) % _k;
+    for (var i = 0; i < _n; i++) {
+      _px[i] += _vx[i] * st;
+      _py[i] += _vy[i] * st;
+      _hx[i * _k + _head] = _px[i];
+      _hy[i * _k + _head] = _py[i];
+    }
+  }
+
+  @override
+  void paint(Canvas canvas, Size size, Palette pal, double shift, double t) {
+    canvas.drawRect(Offset.zero & size, Paint()..color = kBg);
+    if (_n == 0) return;
+    const nb = 20;
+    for (var age = _k - 2; age >= 0; age--) {
+      final lists = List.generate(nb, (_) => <double>[]);
+      final k0 = (_head - age + _k) % _k, k1 = (_head - age - 1 + _k) % _k;
+      for (var i = 0; i < _n; i++) {
+        final ang = math.atan2(_vy[i], _vx[i]) / 6.2832;
+        final b = math.min(nb - 1, (((ang + 1) % 1) * nb).floor());
+        lists[b]
+          ..add(_hx[i * _k + k1])
+          ..add(_hy[i * _k + k1])
+          ..add(_hx[i * _k + k0])
+          ..add(_hy[i * _k + k0]);
+      }
+      final a = (1 - age / (_k - 1)) * 0.8;
+      for (var b = 0; b < nb; b++) {
+        if (lists[b].isEmpty) continue;
+        canvas.drawRawPoints(
+          ui.PointMode.lines,
+          Float32List.fromList(lists[b]),
+          Paint()
+            ..blendMode = BlendMode.plus
+            ..strokeCap = StrokeCap.round
+            ..strokeWidth = age == 0 ? 2.4 : 1.6
+            ..color = palColor(pal, b / nb + shift, 1, a),
+        );
+      }
+    }
+  }
+
+  @override
+  String detail(double t) => '$_n個の光の粒が、近くの仲間だけを見て動く';
+}

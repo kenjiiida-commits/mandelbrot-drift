@@ -27,6 +27,13 @@ const List<PatternInfo> patternList = [
   PatternInfo('L-system（植物の枝分かれ）', -1),
   PatternInfo('波の干渉', 3),
   PatternInfo('万華鏡', 5),
+  PatternInfo('水の底でゆらめく光', 6),
+  PatternInfo('星雲の中を飛ぶ', 7),
+  PatternInfo('雪の結晶が育つ', 8),
+  PatternInfo('シャボン玉', 9),
+  PatternInfo('宝石の城（立体フラクタル）', 10),
+  PatternInfo('4次元の立体', -1),
+  PatternInfo('光の群れ', -1),
 ];
 
 // ───────────── マンデルブロ集合の行き先（名所）と配色 ─────────────
@@ -109,6 +116,8 @@ class Drift extends ChangeNotifier {
     6: MaurerRose(),
     8: Penrose(),
     9: LSystem(),
+    17: Poly4(),
+    18: Flock(),
   };
 
   int pattern = 0;
@@ -417,6 +426,16 @@ class Drift extends ChangeNotifier {
         return '動く40個の種に、いちばん近い場所で塗り分ける';
       case 10:
         return '3つの波源の波が強め合い、打ち消し合う';
+      case 12:
+        return '水面で曲がった光が、底に揺れる網目を描く';
+      case 13:
+        return '色とりどりのガスと星の中を、奥へ奥へと進む';
+      case 14:
+        return '6方向に枝を伸ばして育つ（約24秒ごとに新しい結晶）';
+      case 15:
+        return '薄い膜に光が干渉して、虹色が流れる';
+      case 16:
+        return 'メンガーのスポンジが並ぶ街を飛び抜ける';
       case 11:
         return '${_kDescs[kaleidoVar]}（${kaleidoVar + 1}/${kNames.length}）${kHold ? '・ずっと表示中' : ''}';
       default:

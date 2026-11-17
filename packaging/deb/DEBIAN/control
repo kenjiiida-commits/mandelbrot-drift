@@ -1,5 +1,5 @@
 Package: mandelbrot-drift
-Version: 1.4.0
+Version: 1.5.0
 Section: graphics
 Priority: optional
 Architecture: all
@@ -8,5 +8,6 @@ Maintainer: 飯田顕治 (kenjiiida-commits) <kenjiiida-commits@users.noreply.gi
 Description: マンデルブロ・ドリフト（数学の美しい模様が滑らかに変化し続ける）
  マンデルブロ集合、ジュリア集合、ニュートン法フラクタル、ボロノイ図、
  ペンローズ・タイリング、L-system、反応拡散、ストレンジアトラクタ、
- 黄金角の種の並び、マウラーのバラ、波の干渉、万華鏡（18種類）の12種類を、
+ 黄金角の種の並び、マウラーのバラ、波の干渉、万華鏡（18種類）、
+ 水の底の光、星雲、雪の結晶、シャボン玉、宝石の城、4次元の立体、光の群れの19種類を、
  パソコンのGPUで描き続けます。
