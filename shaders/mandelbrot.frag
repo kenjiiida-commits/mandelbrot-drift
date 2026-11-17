@@ -17,7 +17,7 @@ uniform vec3 uB;        // 14-16
 uniform vec3 uC;        // 17-19
 uniform vec3 uD;        // 20-22
 uniform float uTime;    // 23    経過時間（波・ボロノイ・ニュートン法の動き）
-uniform float uVar;     // 24    万華鏡の種類（0〜9）
+uniform float uVar;     // 24    万華鏡の種類（0〜17）
 
 out vec4 fragColor;
 
@@ -101,7 +101,7 @@ vec3 voronoi(vec2 p) {
 }
 
 // ═══════ 万華鏡 10種類 ═══════
-// uJ.x = 鏡で分ける数（双曲の鏡では多角形の角の数）、uJ.y = 明るさ、uVar = 種類（0〜9）
+// uJ.x = 鏡で分ける数（双曲の鏡では多角形の角の数）、uJ.y = 明るさ、uVar = 種類（0〜17）
 
 vec2 kfold(vec2 p, float n) {
   float r = length(p);
@@ -241,22 +241,48 @@ vec3 k2Stars(vec2 p) {
 }
 
 // 3. 無限トンネル：どこまでも奥へ続く鏡
-vec3 k3Tunnel(vec2 p) {
-  float r = length(p) + 1e-4;
-  float a = atan(p.y, p.x);
-  vec2 lp = vec2(log(r) * 1.4 - uTime * 0.35, a * uJ.x / 6.2831853);
+// mode 0=基本 1=らせん 2=宝石の回廊 3=光の輪 4=二つの渦
+vec3 k3Tunnel(vec2 p, float mode) {
+  vec2 w = p;
+  float fadeR = 0.0;
+  if (mode > 3.5) {
+    // 2つの点を両端にする変換で、一方の渦から湧いてもう一方へ吸い込まれる
+    vec2 A = rot2(vec2(0.55, 0.0), uTime * 0.06);
+    w = cdiv(p - A, p + A);
+    fadeR = min(length(p - A), length(p + A)) * 2.5;
+  }
+  float r = length(w) + 1e-4;
+  float ang = atan(w.y, w.x);
+  float depth = log(r) * (mode > 3.5 ? 0.9 : 1.4);
+  vec2 lp = vec2(depth - uTime * 0.35, ang * uJ.x / 6.2831853);
+  if (mode > 0.5 && mode < 1.5) lp.y += depth * 1.2;
+  if (mode < 3.5) fadeR = r;
   vec2 c = abs(fract(lp) - 0.5) * 2.0;
   vec2 z = c * 1.3;
   vec2 k = vec2(0.75 + 0.1 * sin(uTime * 0.09), 0.6 + 0.1 * cos(uTime * 0.07));
   float tr = 1e9;
+  float tl = 1e9;
   for (int i = 0; i < 6; i++) {
     z = abs(z) / max(dot(z, z), 1e-4) - k;
     tr = min(tr, abs(length(z) - 0.45));
+    tl = min(tl, abs(z.y));
   }
   float ring = floor(lp.x);
-  vec3 col = pal(tr * 1.2 + ring * 0.11 + uShift) * exp(-tr * 9.0) * 0.9;
-  col += vec3(1.0, 0.95, 0.85) * exp(-tr * 60.0) * 0.5;
-  return col * smoothstep(0.0, 0.35, r);
+  vec3 col;
+  if (mode > 0.5 && mode < 1.5) {
+    col = pal(tr * 1.0 + ring * 0.07 + mod(floor(lp.y), uJ.x) * 0.05 + uShift) * exp(-tr * 8.0)
+        + vec3(1.0, 0.95, 0.9) * exp(-tr * 60.0) * 0.4;
+  } else if (mode > 1.5 && mode < 2.5) {
+    col = jewel(tr * 1.5 + ring * 0.13 + uShift * 0.3) * exp(-tr * 6.0) * 1.3
+        + vec3(0.8, 1.0, 1.0) * exp(-tr * 80.0) * 0.8;
+  } else if (mode > 2.5 && mode < 3.5) {
+    col = pal(ring * 0.1 + uShift) * (0.03 / (tl + 0.015)) * 0.9
+        + pal(ring * 0.1 + uShift + 0.5) * (0.02 / (tr + 0.01)) * 0.8;
+  } else {
+    col = pal(tr * 1.2 + ring * 0.11 + uShift) * exp(-tr * 9.0) * 0.9
+        + vec3(1.0, 0.95, 0.85) * exp(-tr * 60.0) * 0.5;
+  }
+  return col * smoothstep(0.0, 0.35, fadeR);
 }
 
 // 4. 双曲の鏡：円の縁へ向かって無限に細かくなる敷き詰め（ポアンカレ円板）
@@ -317,15 +343,47 @@ vec3 k5Apollo(vec2 p) {
 }
 
 // 6. 流れるガラス：溶けたガラスのように色が流れる
-vec3 k6Liquid(vec2 p) {
+// mode 0=宝石色 1=夕焼け 2=オーロラ 3=大理石 4=オパール
+vec3 sunset(float t) {
+  t = fract(t);
+  vec3 c0 = vec3(0.12, 0.02, 0.18);
+  vec3 c1 = vec3(0.75, 0.15, 0.35);
+  vec3 c2 = vec3(1.0, 0.55, 0.15);
+  vec3 c3 = vec3(1.0, 0.88, 0.5);
+  if (t < 0.25) return mix(c0, c1, t / 0.25);
+  if (t < 0.5) return mix(c1, c2, (t - 0.25) / 0.25);
+  if (t < 0.75) return mix(c2, c3, (t - 0.5) / 0.25);
+  return mix(c3, c0, (t - 0.75) / 0.25);
+}
+
+vec3 k6Liquid(vec2 p, float mode) {
   vec2 q = kfold(p, uJ.x) * 2.2;
   float t = uTime * 0.12;
   vec2 a = vec2(fbm(q + vec2(0.0, t)), fbm(q + vec2(5.2, 1.3 - t)));
   vec2 b = vec2(fbm(q + 3.5 * a + vec2(1.7, 9.2) + t), fbm(q + 3.5 * a + vec2(8.3, 2.8) - t));
   float v = fbm(q + 3.0 * b);
-  vec3 col = jewel(v * 1.8 + length(b) * 0.4 + uShift * 0.3);
-  col *= 0.4 + 1.4 * v;
-  col += vec3(0.95, 0.85, 0.45) * pow(max(0.0, v - 0.6), 2.0) * 5.0;
+  vec3 col;
+  if (mode < 0.5) {
+    col = jewel(v * 1.8 + length(b) * 0.4 + uShift * 0.3) * (0.4 + 1.4 * v);
+    col += vec3(0.95, 0.85, 0.45) * pow(max(0.0, v - 0.6), 2.0) * 5.0;
+  } else if (mode < 1.5) {
+    col = sunset(v * 1.6 + length(b) * 0.4 + uShift * 0.3) * (0.35 + 1.5 * v);
+    col += vec3(1.0, 0.9, 0.6) * pow(max(0.0, v - 0.62), 2.0) * 6.0;
+  } else if (mode < 2.5) {
+    float curtain = pow(abs(sin(q.y * 1.3 + 7.0 * v + t * 3.0)), 3.0);
+    float sky = 0.5 + 0.5 * sin(length(q) * 0.8 - t);
+    col = vec3(0.0, 0.02, 0.06) + vec3(0.02, 0.03, 0.1) * sky;
+    col += mix(vec3(0.1, 1.0, 0.45), vec3(0.6, 0.25, 1.0), clamp(b.x * 1.6 - 0.3, 0.0, 1.0)) * curtain * (0.5 + 2.2 * v * v);
+  } else if (mode < 3.5) {
+    float vein = abs(sin(q.x * 3.0 + q.y * 1.7 + 12.0 * v));
+    float cloud = fbm(q * 3.0 + b * 2.0);
+    col = mix(vec3(0.95, 0.96, 0.98), vec3(0.62, 0.68, 0.8), cloud * cloud);
+    col = mix(vec3(0.04, 0.14, 0.5), col, smoothstep(0.0, 0.25, vein));
+    col = mix(vec3(0.95, 0.75, 0.3), col, smoothstep(0.0, 0.04, abs(vein - 0.6)));
+  } else {
+    vec3 iri = 0.6 + 0.4 * cos(6.2831853 * (v * 2.5 + length(b) * 1.2 + vec3(0.0, 0.33, 0.67) + uShift));
+    col = iri * (0.55 + 0.6 * v) + vec3(1.0) * pow(max(0.0, v - 0.55), 2.0) * 3.0;
+  }
   return col;
 }
 
@@ -387,16 +445,17 @@ vec3 k9Mandala(vec2 p) {
 }
 
 vec3 kaleido(vec2 p) {
+  float v = uVar;
   vec3 c;
-  if (uVar < 0.5) c = k0Lace(p);
-  else if (uVar < 1.5) c = k1Gems(p);
-  else if (uVar < 2.5) c = k2Stars(p);
-  else if (uVar < 3.5) c = k3Tunnel(p);
-  else if (uVar < 4.5) c = k4Hyper(p);
-  else if (uVar < 5.5) c = k5Apollo(p);
-  else if (uVar < 6.5) c = k6Liquid(p);
-  else if (uVar < 7.5) c = k7Threads(p);
-  else if (uVar < 8.5) c = k8Shards(p);
+  if (v < 0.5) c = k0Lace(p);
+  else if (v < 1.5) c = k1Gems(p);
+  else if (v < 2.5) c = k2Stars(p);
+  else if (v < 7.5) c = k3Tunnel(p, v - 3.0);
+  else if (v < 8.5) c = k4Hyper(p);
+  else if (v < 9.5) c = k5Apollo(p);
+  else if (v < 14.5) c = k6Liquid(p, v - 10.0);
+  else if (v < 15.5) c = k7Threads(p);
+  else if (v < 16.5) c = k8Shards(p);
   else c = k9Mandala(p);
   return c * uJ.y;
 }

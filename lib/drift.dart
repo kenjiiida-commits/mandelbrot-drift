@@ -145,15 +145,23 @@ class Drift extends ChangeNotifier {
 
   double get scale => math.exp(logS);
 
-  // 万華鏡 10種類：30秒ごとに次の種類へ。替わる前後は暗くする
+  // 万華鏡 18種類：30秒ごとに次の種類へ。替わる前後は暗くする（「ずっと見る」の間は替えない）
   static const List<String> kNames = [
     '宝石のレース',
     'エメラルドとサファイア',
     '星屑',
     '無限トンネル',
+    '無限トンネル：らせん',
+    '無限トンネル：宝石の回廊',
+    '無限トンネル：光の輪',
+    '無限トンネル：二つの渦',
     '双曲の鏡',
     'アポロニウスのレース',
     '流れるガラス',
+    '流れるガラス：夕焼け',
+    '流れるガラス：オーロラ',
+    '流れるガラス：大理石',
+    '流れるガラス：オパール',
     '光の糸',
     'ガラスの破片',
     '花びらの曼荼羅',
@@ -163,18 +171,36 @@ class Drift extends ChangeNotifier {
     '緑と青の宝石を金の枠に散りばめる',
     '青と緑のきらめきが流れていく',
     'どこまでも奥へ続く鏡のトンネル',
+    '渦を巻きながら奥へ吸い込まれる',
+    '緑と青の宝石が奥へと連なる',
+    'ネオンのような光の線が奥へ続く',
+    '一方の渦から湧き出て、もう一方へ吸い込まれる',
     '縁へ向かって無限に細かくなる敷き詰め',
     '円の中に円が無限に詰まったレース',
     '溶けたガラスのように宝石の色が流れる',
+    '紫からバラ色、金色へと流れる',
+    '緑と紫の光のカーテンが揺れる',
+    '白い石の中を青と金の筋が流れる',
+    '虹色の光がきらめきながら流れる',
     '光る糸が鏡の間を行き交う',
     '色ガラスのかけらが重なって転がる',
     '幾重もの花びらが呼吸する',
   ];
-  static const List<int> _kSegs = [8, 6, 8, 8, 7, 6, 6, 12, 6, 8];
+  static const List<int> _kSegs = [8, 6, 8, 8, 6, 8, 10, 6, 7, 6, 6, 8, 6, 6, 8, 12, 6, 8];
   int _kStart = 0;
   int _kNext = -1;
-  int get kaleidoVar => (_kStart + (ptime / 30).floor()) % kNames.length;
+  double _kTime = 0; // 万華鏡を切り替えるための時計（「ずっと見る」の間は止まる）
+  bool kHold = false; // 同じ万華鏡をずっと見る
+  int get kaleidoVar => (_kStart + (_kTime / 30).floor()) % kNames.length;
   double get kaleidoSegs => _kSegs[kaleidoVar].toDouble();
+  double get kaleidoDim {
+    final fadeIn = math.min(1.0, ptime / 5);
+    if (kHold) return fadeIn;
+    final fr = _kTime / 30 - (_kTime / 30).floor();
+    return math.min(fadeIn, math.min(1.0, math.min(fr * 6, (1 - fr) * 6) + (_kTime < 5 ? 1.0 : 0.0)));
+  }
+
+  void toggleHold() => kHold = !kHold;
 
   /// メニューで選んだ種類の万華鏡から始める
   void requestKaleido(int v) {
@@ -182,10 +208,6 @@ class Drift extends ChangeNotifier {
     _pending = 11;
   }
 
-  double get kaleidoDim {
-    final fr = ptime / 30 - (ptime / 30).floor();
-    return math.min(1.0, math.min(fr * 6, (1 - fr) * 6));
-  }
   PatternInfo get info => patternList[pattern];
   int get shaderMode => info.shaderMode;
 
@@ -240,9 +262,12 @@ class Drift extends ChangeNotifier {
       logS = math.log(kWide);
       _newSeg(true);
     }
-    if (i == 11 && _kNext >= 0) {
-      _kStart = _kNext;
-      _kNext = -1;
+    if (i == 11) {
+      _kTime = 0;
+      if (_kNext >= 0) {
+        _kStart = _kNext;
+        _kNext = -1;
+      }
     }
     cpu[i]?.reset();
   }
@@ -280,7 +305,8 @@ class Drift extends ChangeNotifier {
     rot += dt * 0.025;
     shift += dt * 0.035;
 
-    if (autoCycle && _pending < 0) {
+    if (pattern == 11 && !kHold) _kTime += dt;
+    if (autoCycle && _pending < 0 && !(pattern == 11 && kHold)) {
       _cycleTime += dt;
       if (_cycleTime > (pattern == 0 ? 56 : (pattern == 11 ? 150 : 45))) {
         requestPattern((pattern + 1) % patternList.length);
@@ -392,7 +418,7 @@ class Drift extends ChangeNotifier {
       case 10:
         return '3つの波源の波が強め合い、打ち消し合う';
       case 11:
-        return '${_kDescs[kaleidoVar]}（${kaleidoVar + 1}/${kNames.length}）';
+        return '${_kDescs[kaleidoVar]}（${kaleidoVar + 1}/${kNames.length}）${kHold ? '・ずっと表示中' : ''}';
       default:
         return cpu[pattern]?.detail(ptime) ?? '';
     }

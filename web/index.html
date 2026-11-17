@@ -49,6 +49,7 @@
   <button id="bColor">色</button>
   <button id="bSpeed">速さ 1×</button>
   <button id="bPlay">一時停止</button>
+  <button id="bHold" style="display:none">ずっと見る</button>
   <button id="bFull">全画面</button>
 </div>
 <div id="menu"></div>
@@ -168,7 +169,7 @@ vec3 voronoi(vec2 p) {
 }
 
 // ═══════ 万華鏡 10種類 ═══════
-// uJ.x = 鏡で分ける数（双曲の鏡では多角形の角の数）、uJ.y = 明るさ、uVar = 種類（0〜9）
+// uJ.x = 鏡で分ける数（双曲の鏡では多角形の角の数）、uJ.y = 明るさ、uVar = 種類（0〜17）
 
 vec2 kfold(vec2 p, float n) {
   float r = length(p);
@@ -308,22 +309,48 @@ vec3 k2Stars(vec2 p) {
 }
 
 // 3. 無限トンネル：どこまでも奥へ続く鏡
-vec3 k3Tunnel(vec2 p) {
-  float r = length(p) + 1e-4;
-  float a = atan(p.y, p.x);
-  vec2 lp = vec2(log(r) * 1.4 - uTime * 0.35, a * uJ.x / 6.2831853);
+// mode 0=基本 1=らせん 2=宝石の回廊 3=光の輪 4=二つの渦
+vec3 k3Tunnel(vec2 p, float mode) {
+  vec2 w = p;
+  float fadeR = 0.0;
+  if (mode > 3.5) {
+    // 2つの点を両端にする変換で、一方の渦から湧いてもう一方へ吸い込まれる
+    vec2 A = rot2(vec2(0.55, 0.0), uTime * 0.06);
+    w = cdiv(p - A, p + A);
+    fadeR = min(length(p - A), length(p + A)) * 2.5;
+  }
+  float r = length(w) + 1e-4;
+  float ang = atan(w.y, w.x);
+  float depth = log(r) * (mode > 3.5 ? 0.9 : 1.4);
+  vec2 lp = vec2(depth - uTime * 0.35, ang * uJ.x / 6.2831853);
+  if (mode > 0.5 && mode < 1.5) lp.y += depth * 1.2;
+  if (mode < 3.5) fadeR = r;
   vec2 c = abs(fract(lp) - 0.5) * 2.0;
   vec2 z = c * 1.3;
   vec2 k = vec2(0.75 + 0.1 * sin(uTime * 0.09), 0.6 + 0.1 * cos(uTime * 0.07));
   float tr = 1e9;
+  float tl = 1e9;
   for (int i = 0; i < 6; i++) {
     z = abs(z) / max(dot(z, z), 1e-4) - k;
     tr = min(tr, abs(length(z) - 0.45));
+    tl = min(tl, abs(z.y));
   }
   float ring = floor(lp.x);
-  vec3 col = pal(tr * 1.2 + ring * 0.11 + uShift) * exp(-tr * 9.0) * 0.9;
-  col += vec3(1.0, 0.95, 0.85) * exp(-tr * 60.0) * 0.5;
-  return col * smoothstep(0.0, 0.35, r);
+  vec3 col;
+  if (mode > 0.5 && mode < 1.5) {
+    col = pal(tr * 1.0 + ring * 0.07 + mod(floor(lp.y), uJ.x) * 0.05 + uShift) * exp(-tr * 8.0)
+        + vec3(1.0, 0.95, 0.9) * exp(-tr * 60.0) * 0.4;
+  } else if (mode > 1.5 && mode < 2.5) {
+    col = jewel(tr * 1.5 + ring * 0.13 + uShift * 0.3) * exp(-tr * 6.0) * 1.3
+        + vec3(0.8, 1.0, 1.0) * exp(-tr * 80.0) * 0.8;
+  } else if (mode > 2.5 && mode < 3.5) {
+    col = pal(ring * 0.1 + uShift) * (0.03 / (tl + 0.015)) * 0.9
+        + pal(ring * 0.1 + uShift + 0.5) * (0.02 / (tr + 0.01)) * 0.8;
+  } else {
+    col = pal(tr * 1.2 + ring * 0.11 + uShift) * exp(-tr * 9.0) * 0.9
+        + vec3(1.0, 0.95, 0.85) * exp(-tr * 60.0) * 0.5;
+  }
+  return col * smoothstep(0.0, 0.35, fadeR);
 }
 
 // 4. 双曲の鏡：円の縁へ向かって無限に細かくなる敷き詰め（ポアンカレ円板）
@@ -384,15 +411,47 @@ vec3 k5Apollo(vec2 p) {
 }
 
 // 6. 流れるガラス：溶けたガラスのように色が流れる
-vec3 k6Liquid(vec2 p) {
+// mode 0=宝石色 1=夕焼け 2=オーロラ 3=大理石 4=オパール
+vec3 sunset(float t) {
+  t = fract(t);
+  vec3 c0 = vec3(0.12, 0.02, 0.18);
+  vec3 c1 = vec3(0.75, 0.15, 0.35);
+  vec3 c2 = vec3(1.0, 0.55, 0.15);
+  vec3 c3 = vec3(1.0, 0.88, 0.5);
+  if (t < 0.25) return mix(c0, c1, t / 0.25);
+  if (t < 0.5) return mix(c1, c2, (t - 0.25) / 0.25);
+  if (t < 0.75) return mix(c2, c3, (t - 0.5) / 0.25);
+  return mix(c3, c0, (t - 0.75) / 0.25);
+}
+
+vec3 k6Liquid(vec2 p, float mode) {
   vec2 q = kfold(p, uJ.x) * 2.2;
   float t = uTime * 0.12;
   vec2 a = vec2(fbm(q + vec2(0.0, t)), fbm(q + vec2(5.2, 1.3 - t)));
   vec2 b = vec2(fbm(q + 3.5 * a + vec2(1.7, 9.2) + t), fbm(q + 3.5 * a + vec2(8.3, 2.8) - t));
   float v = fbm(q + 3.0 * b);
-  vec3 col = jewel(v * 1.8 + length(b) * 0.4 + uShift * 0.3);
-  col *= 0.4 + 1.4 * v;
-  col += vec3(0.95, 0.85, 0.45) * pow(max(0.0, v - 0.6), 2.0) * 5.0;
+  vec3 col;
+  if (mode < 0.5) {
+    col = jewel(v * 1.8 + length(b) * 0.4 + uShift * 0.3) * (0.4 + 1.4 * v);
+    col += vec3(0.95, 0.85, 0.45) * pow(max(0.0, v - 0.6), 2.0) * 5.0;
+  } else if (mode < 1.5) {
+    col = sunset(v * 1.6 + length(b) * 0.4 + uShift * 0.3) * (0.35 + 1.5 * v);
+    col += vec3(1.0, 0.9, 0.6) * pow(max(0.0, v - 0.62), 2.0) * 6.0;
+  } else if (mode < 2.5) {
+    float curtain = pow(abs(sin(q.y * 1.3 + 7.0 * v + t * 3.0)), 3.0);
+    float sky = 0.5 + 0.5 * sin(length(q) * 0.8 - t);
+    col = vec3(0.0, 0.02, 0.06) + vec3(0.02, 0.03, 0.1) * sky;
+    col += mix(vec3(0.1, 1.0, 0.45), vec3(0.6, 0.25, 1.0), clamp(b.x * 1.6 - 0.3, 0.0, 1.0)) * curtain * (0.5 + 2.2 * v * v);
+  } else if (mode < 3.5) {
+    float vein = abs(sin(q.x * 3.0 + q.y * 1.7 + 12.0 * v));
+    float cloud = fbm(q * 3.0 + b * 2.0);
+    col = mix(vec3(0.95, 0.96, 0.98), vec3(0.62, 0.68, 0.8), cloud * cloud);
+    col = mix(vec3(0.04, 0.14, 0.5), col, smoothstep(0.0, 0.25, vein));
+    col = mix(vec3(0.95, 0.75, 0.3), col, smoothstep(0.0, 0.04, abs(vein - 0.6)));
+  } else {
+    vec3 iri = 0.6 + 0.4 * cos(6.2831853 * (v * 2.5 + length(b) * 1.2 + vec3(0.0, 0.33, 0.67) + uShift));
+    col = iri * (0.55 + 0.6 * v) + vec3(1.0) * pow(max(0.0, v - 0.55), 2.0) * 3.0;
+  }
   return col;
 }
 
@@ -454,16 +513,17 @@ vec3 k9Mandala(vec2 p) {
 }
 
 vec3 kaleido(vec2 p) {
+  float v = uVar;
   vec3 c;
-  if (uVar < 0.5) c = k0Lace(p);
-  else if (uVar < 1.5) c = k1Gems(p);
-  else if (uVar < 2.5) c = k2Stars(p);
-  else if (uVar < 3.5) c = k3Tunnel(p);
-  else if (uVar < 4.5) c = k4Hyper(p);
-  else if (uVar < 5.5) c = k5Apollo(p);
-  else if (uVar < 6.5) c = k6Liquid(p);
-  else if (uVar < 7.5) c = k7Threads(p);
-  else if (uVar < 8.5) c = k8Shards(p);
+  if (v < 0.5) c = k0Lace(p);
+  else if (v < 1.5) c = k1Gems(p);
+  else if (v < 2.5) c = k2Stars(p);
+  else if (v < 7.5) c = k3Tunnel(p, v - 3.0);
+  else if (v < 8.5) c = k4Hyper(p);
+  else if (v < 9.5) c = k5Apollo(p);
+  else if (v < 14.5) c = k6Liquid(p, v - 10.0);
+  else if (v < 15.5) c = k7Threads(p);
+  else if (v < 16.5) c = k8Shards(p);
   else c = k9Mandala(p);
   return c * uJ.y;
 }
@@ -921,7 +981,7 @@ const useRdGPU = () => rdGPU && rdGPU.ok;
 // ───────── 状態 ─────────
 const S = { pattern:0, pending:-1, fade:0, autoCycle:false, cycle:0, ptime:0,
   speed:1, playing:true, auto:true, cx:TARGETS[0][1], cy:TARGETS[0][2], logS:Math.log(WIDE),
-  rot:0, shift:0, jAngle:0, tIdx:0, seg:null, palIdx:0, palFrom:PALETTES[0], palT:1, kStart:0, kNext:-1 };
+  rot:0, shift:0, jAngle:0, tIdx:0, seg:null, palIdx:0, palFrom:PALETTES[0], palT:1, kStart:0, kNext:-1, kTime:0, kHold:false };
 function newSeg(zoomIn){ const T=TARGETS[S.tIdx];
   const deep = Math.log(T[3]);
   S.seg={zoomIn, t:0, dur: zoomIn ? 6 + 4.5*Math.log10(WIDE/T[3]) : 14,
@@ -934,19 +994,20 @@ function stepTour(dt){ const g=S.seg; g.t+=dt; const p=Math.min(1,g.t/g.dur);
   if(p>=1){ if(g.zoomIn){ S.tIdx=(S.tIdx+1)%TARGETS.length; newSeg(false); } else newSeg(true); } }
 function curPal(){ const P=PALETTES[S.palIdx], k=smooth(0,1,S.palT), m=key=>[0,1,2].map(i=>lerp(S.palFrom[key][i],P[key][i],k));
   return {a:m('a'), b:m('b'), c:m('c'), d:m('d')}; }
-// 万華鏡 10種類：30秒ごとに次の種類へ。替わる前後は暗くする
-const K_NAMES=['宝石のレース','エメラルドとサファイア','星屑','無限トンネル','双曲の鏡','アポロニウスのレース','流れるガラス','光の糸','ガラスの破片','花びらの曼荼羅'];
-const K_DESCS=['折り返しと反転を繰り返して生まれるレース','緑と青の宝石を金の枠に散りばめる','青と緑のきらめきが流れていく','どこまでも奥へ続く鏡のトンネル','縁へ向かって無限に細かくなる敷き詰め','円の中に円が無限に詰まったレース','溶けたガラスのように宝石の色が流れる','光る糸が鏡の間を行き交う','色ガラスのかけらが重なって転がる','幾重もの花びらが呼吸する'];
-const K_SEGS=[8,6,8,8,7,6,6,12,6,8];
-const kVar = () => (S.kStart + Math.floor(S.ptime/30)) % K_NAMES.length;
+// 万華鏡 18種類：30秒ごとに次の種類へ。替わる前後は暗くする（「ずっと見る」の間は替えない）
+const K_NAMES=['宝石のレース','エメラルドとサファイア','星屑','無限トンネル','無限トンネル：らせん','無限トンネル：宝石の回廊','無限トンネル：光の輪','無限トンネル：二つの渦','双曲の鏡','アポロニウスのレース','流れるガラス','流れるガラス：夕焼け','流れるガラス：オーロラ','流れるガラス：大理石','流れるガラス：オパール','光の糸','ガラスの破片','花びらの曼荼羅'];
+const K_DESCS=['折り返しと反転を繰り返して生まれるレース','緑と青の宝石を金の枠に散りばめる','青と緑のきらめきが流れていく','どこまでも奥へ続く鏡のトンネル','渦を巻きながら奥へ吸い込まれる','緑と青の宝石が奥へと連なる','ネオンのような光の線が奥へ続く','一方の渦から湧き出て、もう一方へ吸い込まれる','縁へ向かって無限に細かくなる敷き詰め','円の中に円が無限に詰まったレース','溶けたガラスのように宝石の色が流れる','紫からバラ色、金色へと流れる','緑と紫の光のカーテンが揺れる','白い石の中を青と金の筋が流れる','虹色の光がきらめきながら流れる','光る糸が鏡の間を行き交う','色ガラスのかけらが重なって転がる','幾重もの花びらが呼吸する'];
+const K_SEGS=[8,6,8,8,6,8,10,6,7,6,6,8,6,6,8,12,6,8];
+const kVar = () => (S.kStart + Math.floor(S.kTime/30)) % K_NAMES.length;
 const kSegs = () => K_SEGS[kVar()];
-const kDim = () => { const fr=S.ptime/30-Math.floor(S.ptime/30); return Math.min(1, fr*6, (1-fr)*6); };
+const kDim = () => { const fadeIn=Math.min(1,S.ptime/5); if(S.kHold) return fadeIn;
+  const fr=S.kTime/30-Math.floor(S.kTime/30); return Math.min(fadeIn, Math.min(1, Math.min(fr*6,(1-fr)*6)+(S.kTime<5?1:0))); };
 function requestKaleido(v){ S.kNext=v; S.pending=11; }
 const usesGL = i => PATTERNS[i].sm >= 0 || (i === 4 && useRdGPU());
 function requestPattern(i){ if(i===S.pattern && S.pending<0) return; S.pending=i; }
 function apply(i){ S.pattern=i; S.ptime=0; S.cycle=0; S.auto=true; S.cx=0; S.cy=0; S.logS=0;
   if(i===0){ S.cx=TARGETS[S.tIdx][1]; S.cy=TARGETS[S.tIdx][2]; S.logS=Math.log(WIDE); newSeg(true); }
-  if(i===11 && S.kNext>=0){ S.kStart=S.kNext; S.kNext=-1; }
+  if(i===11){ S.kTime=0; if(S.kNext>=0){ S.kStart=S.kNext; S.kNext=-1; } }
   if(CPU[i]) CPU[i].reset();
   if(i===4 && rdGPU) rdGPU.reset();
   glc.style.display = usesGL(i) ? 'block' : 'none';
@@ -987,7 +1048,8 @@ function frame(now){
 
   const dt=S.playing?raw*S.speed:0;
   S.ptime+=dt; S.rot+=dt*0.025; S.shift+=dt*0.035;
-  if(S.autoCycle && S.pending<0){ S.cycle+=dt; if(S.cycle>(S.pattern===0?75:(S.pattern===11?150:45))) requestPattern((S.pattern+1)%PATTERNS.length); }
+  if(S.pattern===11 && !S.kHold) S.kTime+=dt;
+  if(S.autoCycle && S.pending<0 && !(S.pattern===11 && S.kHold)){ S.cycle+=dt; if(S.cycle>(S.pattern===0?75:(S.pattern===11?150:45))) requestPattern((S.pattern+1)%PATTERNS.length); }
   S.palT=Math.min(1,S.palT+raw/1.8);
   const P=curPal(), cpu=CPU[S.pattern];
   if(S.pattern===0){ if(S.auto) stepTour(dt); }
@@ -1036,7 +1098,7 @@ function updateInfo(){
   else if(S.pattern===2) det='z³ = 1 の3つの解のどれにたどり着くかで色分け';
   else if(S.pattern===7) det='動く40個の種に、いちばん近い場所で塗り分ける';
   else if(S.pattern===10) det='3つの波源の波が強め合い、打ち消し合う';
-  else if(S.pattern===11){ place='万華鏡：'+K_NAMES[kVar()]; det=`${K_DESCS[kVar()]}（${kVar()+1}/${K_NAMES.length}）`; }
+  else if(S.pattern===11){ place='万華鏡：'+K_NAMES[kVar()]; det=`${K_DESCS[kVar()]}（${kVar()+1}/${K_NAMES.length}）${S.kHold?'・ずっと表示中':''}`; }
   else if(S.pattern===4 && useRdGPU()) det='2つの物質が広がりながら反応する';
   else det=CPU[S.pattern].detail(S.ptime);
   if(sm>=0) q=`GPUで描画 ${glc.width}×${glc.height}・1画素を${aa*aa}回計算`;
@@ -1052,6 +1114,8 @@ function showUI(){ ui.forEach(e=>e.classList.remove('hidden')); clearTimeout(hid
 function updateButtons(){
   $('bMenu').textContent = S.autoCycle ? '模様（おまかせ）' : '模様';
   $('bPlay').textContent = !S.auto ? '自動再開' : (S.playing ? '一時停止' : '再生');
+  $('bHold').style.display = S.pattern===11 ? '' : 'none';
+  $('bHold').textContent = S.kHold ? 'ずっと見る：オン' : 'ずっと見る';
 }
 function on(el,fn){ el.addEventListener('pointerdown',e=>e.stopPropagation()); el.addEventListener('click',e=>{ e.stopPropagation(); fn(); updateButtons(); showUI(); }); }
 function buildMenu(){
@@ -1062,7 +1126,7 @@ function buildMenu(){
   m.appendChild(auto); m.appendChild(document.createElement('hr'));
   PATTERNS.forEach((p,i)=>{ const b=document.createElement('button'); b.className='row';
     b.innerHTML='<span></span><span>'+(i===(S.pending>=0?S.pending:S.pattern)?'✓':'')+'</span>'; b.firstChild.textContent=p.name;
-    if(i===11) b.firstChild.textContent='万華鏡（10種類を順番に）';
+    if(i===11) b.firstChild.textContent=`万華鏡（${K_NAMES.length}種類を順番に）`;
     on(b,()=>{ requestPattern(i); closeMenu(); }); m.appendChild(b);
     if(i===11) K_NAMES.forEach((n,v)=>{ const c=document.createElement('button'); c.className='row';
       c.style.cssText='padding:10px 20px 10px 44px;font-size:14px';
@@ -1073,6 +1137,7 @@ function openMenu(){ buildMenu(); menuOpen=true; $('menu').classList.add('open')
 function closeMenu(){ menuOpen=false; $('menu').classList.remove('open'); }
 $('menu').addEventListener('pointerdown',e=>e.stopPropagation());
 on($('bMenu'), ()=> menuOpen ? closeMenu() : openMenu());
+on($('bHold'), ()=>{ S.kHold=!S.kHold; });
 on($('bColor'), ()=>{ S.palFrom=curPal(); S.palIdx=(S.palIdx+1)%PALETTES.length; S.palT=0; });
 const SPEEDS=[1,2,4,0.5]; let sIdx=0;
 on($('bSpeed'), ()=>{ sIdx=(sIdx+1)%SPEEDS.length; S.speed=SPEEDS[sIdx]; $('bSpeed').textContent=`速さ ${S.speed}×`; });

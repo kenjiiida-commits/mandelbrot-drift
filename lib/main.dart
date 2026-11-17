@@ -117,7 +117,7 @@ class _DriftPageState extends State<DriftPage> with SingleTickerProviderStateMix
                 const Divider(height: 1),
                 for (var i = 0; i < patternList.length; i++) ...[
                   ListTile(
-                    title: Text(i == 11 ? '万華鏡（10種類を順番に）' : patternList[i].name),
+                    title: Text(i == 11 ? '万華鏡（${Drift.kNames.length}種類を順番に）' : patternList[i].name),
                     trailing: i == drift.pattern ? const Icon(Icons.check) : null,
                     onTap: () {
                       drift.requestPattern(i);
@@ -236,6 +236,8 @@ class _DriftPageState extends State<DriftPage> with SingleTickerProviderStateMix
                     }),
                     _btn(!drift.auto ? '自動再開' : (drift.playing ? '一時停止' : '再生'),
                         () => drift.playButton()),
+                    if (drift.pattern == 11)
+                      _btn(drift.kHold ? 'ずっと見る：オン' : 'ずっと見る', () => drift.toggleHold()),
                   ],
                 ),
               ),
