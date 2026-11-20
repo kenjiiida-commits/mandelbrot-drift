@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 
 import 'drift.dart';
+import 'recorder.dart';
 import 'sound.dart';
 
 void main() {
@@ -51,6 +54,13 @@ class _DriftPageState extends State<DriftPage> with SingleTickerProviderStateMix
   bool uiVisible = true;
   Timer? hideTimer;
   double lastPinch = 1;
+
+  // 録画
+  final RecordSettings recSettings = RecordSettings();
+  bool recording = false;
+  bool recCancel = false;
+  double recProgress = 0;
+  String recStage = '';
 
   static const speeds = [1.0, 2.0, 4.0, 0.5];
   int speedIdx = 0;
@@ -228,6 +238,7 @@ class _DriftPageState extends State<DriftPage> with SingleTickerProviderStateMix
               ),
             ),
           ),
+          if (recording) _recordingOverlay(),
         ],
       ),
     );
@@ -278,6 +289,7 @@ class _DriftPageState extends State<DriftPage> with SingleTickerProviderStateMix
                     if (drift.usesTilt)
                       _btn(drift.tiltOn ? '見回す：オン' : '見回す：オフ', () => drift.toggleTilt()),
                     _btn(sound.enabled ? '音：オン' : '音：オフ', () => sound.toggle()),
+                    _btn('● 録画', _openRecord, direct: true),
                   ],
                 ),
             ),
@@ -285,6 +297,178 @@ class _DriftPageState extends State<DriftPage> with SingleTickerProviderStateMix
         ),
       ],
     );
+  }
+
+  // ───────────── 録画 ─────────────
+
+  void _openRecord() {
+    hideTimer?.cancel();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xF0141418),
+      isScrollControlled: true,
+      builder: (_) => RecordSheet(settings: recSettings, onStart: _record),
+    ).whenComplete(showUi);
+  }
+
+  Widget _recordingOverlay() {
+    return Container(
+      color: const Color(0x99000000),
+      alignment: Alignment.center,
+      child: Container(
+        width: 280,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(color: const Color(0xF0141418), borderRadius: BorderRadius.circular(16)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.fiber_manual_record, color: Colors.redAccent),
+            const SizedBox(height: 8),
+            Text(recStage, style: const TextStyle(fontSize: 16)),
+            const SizedBox(height: 12),
+            LinearProgressIndicator(value: recProgress),
+            const SizedBox(height: 8),
+            Text('${(recProgress * 100).floor()}%'),
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: recCancel ? null : () => setState(() => recCancel = true),
+              child: Text(recCancel ? '取り消しています…' : '取り消す'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _two(int v) => v.toString().padLeft(2, '0');
+
+  /// 1コマずつ正確な時間で描き直し、Android 側で動画ファイルにする
+  Future<void> _record() async {
+    final sh = shader;
+    if (sh == null || recording) return;
+    final mq = MediaQuery.of(context);
+    final screen = mq.size;
+    final dpr = mq.devicePixelRatio;
+    final s = recSettings;
+
+    // 書き出す大きさ（縦横とも偶数にする）
+    late final Size logical;
+    int w, h;
+    if (s.shorts) {
+      logical = Size(screen.width, screen.width * 16 / 9);
+      w = 1080;
+      h = 1920;
+    } else {
+      final pw = screen.width * dpr, ph = screen.height * dpr;
+      final longSide = math.max(pw, ph);
+      final f = longSide > 1920 ? 1920 / longSide : 1.0;
+      logical = screen;
+      w = math.max(2, (pw * f / 2).round() * 2);
+      h = math.max(2, (ph * f / 2).round() * 2);
+    }
+    try {
+      (w, h) = await RecorderChannel.fitSize(w, h);
+    } catch (_) {}
+    if (!mounted) return;
+    final kx = w / logical.width, ky = h / logical.height;
+    final bitrate = (w * h * s.fps * 0.15).clamp(12e6, 40e6).round();
+    final total = s.seconds * s.fps;
+
+    hideTimer?.cancel();
+    setState(() {
+      recording = true;
+      recCancel = false;
+      recProgress = 0;
+      recStage = '準備中…';
+      uiVisible = false;
+    });
+
+    ticker.stop();
+    final savedScale = drift.renderScale;
+    final savedScreen = drift.screen;
+    drift.recording = true;
+    drift.renderScale = 1;
+    drift.screen = logical;
+
+    String? path;
+    Object? failure;
+    try {
+      Uint8List? pcm;
+      if (s.audio) {
+        pcm = await compute(makeScapePcm, <Object>[drift.scape, s.seconds.toDouble()]);
+      }
+      await RecorderChannel.start(width: w, height: h, fps: s.fps, bitrate: bitrate, pcm: pcm);
+      if (mounted) setState(() => recStage = '書き出し中');
+      final painter = FractalPainter(shader: sh, drift: drift, dpr: kx);
+      for (var i = 0; i < total && !recCancel; i++) {
+        drift.tick(1 / s.fps);
+        await drift.cpu[drift.pattern]?.settle();
+        final pr = ui.PictureRecorder();
+        final canvas = Canvas(pr);
+        canvas.scale(kx, ky);
+        painter.paint(canvas, logical);
+        final pic = pr.endRecording();
+        final img = await pic.toImage(w, h);
+        pic.dispose();
+        final bytes = await img.toByteData(format: ui.ImageByteFormat.rawRgba);
+        img.dispose();
+        await RecorderChannel.frame(bytes!.buffer.asUint8List());
+        if (mounted && (i % 3 == 0 || i == total - 1)) setState(() => recProgress = (i + 1) / total);
+      }
+      if (mounted) setState(() => recStage = recCancel ? '取り消しています…' : '保存しています…');
+      final t = DateTime.now();
+      final name = 'mandelbrot_drift_${t.year}${_two(t.month)}${_two(t.day)}_'
+          '${_two(t.hour)}${_two(t.minute)}${_two(t.second)}${s.shorts ? '_short' : ''}.mp4';
+      path = await RecorderChannel.finish(cancel: recCancel, name: name);
+    } catch (e) {
+      failure = e;
+      try {
+        await RecorderChannel.finish(cancel: true, name: 'cancel.mp4');
+      } catch (_) {}
+    } finally {
+      drift.recording = false;
+      drift.renderScale = savedScale;
+      drift.screen = savedScreen;
+      last = Duration.zero;
+      if (mounted) {
+        ticker.start();
+        setState(() => recording = false);
+      }
+    }
+    if (!mounted) return;
+    if (failure != null) {
+      _recordDone('録画できませんでした', '$failure', false);
+    } else if (path != null) {
+      _recordDone(
+        '動画を保存しました',
+        '$path\n\nギャラリー（フォト）アプリの「MandelbrotDrift」フォルダにあります。'
+            '${s.shorts ? '\n\n「共有する」から YouTube を選ぶと、ショートとして投稿できます。' : ''}',
+        true,
+      );
+    } else {
+      showUi();
+    }
+  }
+
+  void _recordDone(String title, String body, bool canShare) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(body),
+        actions: [
+          if (canShare)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                RecorderChannel.share();
+              },
+              child: const Text('共有する'),
+            ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('閉じる')),
+        ],
+      ),
+    ).whenComplete(showUi);
   }
 
   String _speedText(double s) => s == s.roundToDouble() ? s.toInt().toString() : s.toString();

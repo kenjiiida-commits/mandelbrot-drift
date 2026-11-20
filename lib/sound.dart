@@ -269,3 +269,34 @@ class SoundEngine {
     }
   }
 }
+
+/// 録画用の音：その模様の環境音を、44100Hz・指定の秒数ぶん作る（始めと終わりはなめらかに大きく・小さく）
+/// args = [音の種類, 秒数]。別の処理の流れで計算するため、トップレベルの関数にしている。
+Uint8List makeScapePcm(List<Object> args) {
+  final kind = args[0] as int;
+  final seconds = (args[1] as num).toDouble();
+  final x = kind == scapeWind
+      ? _wind()
+      : kind == scapeCave
+          ? _cave()
+          : kind == scapeWarp
+              ? _warp()
+              : _pad();
+  const outRate = 44100;
+  final n = (seconds * outRate).round();
+  final d = ByteData(n * 2);
+  const fade = 0.8 * outRate;
+  for (var i = 0; i < n; i++) {
+    final src = i * _sr / outRate; // 22050Hz の音を2倍の細かさに引き伸ばす
+    final i0 = src.floor() % _n;
+    final i1 = (i0 + 1) % _n;
+    final f = src - src.floor();
+    var v = x[i0] * (1 - f) + x[i1] * f;
+    if (i < fade) v *= i / fade;
+    if (n - i < fade) v *= (n - i) / fade;
+    if (v > 1) v = 1;
+    if (v < -1) v = -1;
+    d.setInt16(i * 2, (v * 32767 * 0.9).round(), Endian.little);
+  }
+  return d.buffer.asUint8List();
+}

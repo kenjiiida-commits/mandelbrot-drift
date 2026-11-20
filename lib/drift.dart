@@ -153,6 +153,9 @@ class Drift extends ChangeNotifier {
 
   // 端末の速さに合わせて描画の解像度を自動で上げ下げする
   double renderScale = 0.6;
+
+  /// 録画中は true：画質を自動で下げず、画面の描き直しも止める
+  bool recording = false;
   double _avgMs = 16.7;
   double _bestMs = 16.7;
   double _sinceResize = 0;
@@ -449,7 +452,7 @@ class Drift extends ChangeNotifier {
       _bestMs = math.min(_bestMs, _avgMs);
     }
     _sinceResize += raw;
-    if (_sinceResize > 1.2) {
+    if (!recording && _sinceResize > 1.2) {
       if (_avgMs > _bestMs * 1.5 && renderScale > 0.3) {
         renderScale = math.max(0.3, renderScale * 0.85);
         _sinceResize = 0;
@@ -521,7 +524,7 @@ class Drift extends ChangeNotifier {
         cpu[pattern]?.update(dt, ptime, palette, shift, screen);
     }
     palT = math.min(1.0, palT + raw / 1.8);
-    notifyListeners();
+    if (!recording) notifyListeners();
   }
 
   /// いまの配色（切り替え中は前の配色と混ぜる）

@@ -1,4 +1,5 @@
 // スマホのCPUで計算して描く模様（黄金角・反応拡散・アトラクタ・バラ・ペンローズ・L-system）
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -43,6 +44,9 @@ abstract class CpuPattern {
   void paint(Canvas canvas, Size size, Palette pal, double shift, double t);
 
   String detail(double t) => '';
+
+  /// 録画のとき：計算した結果が絵になるのを待つ（ふだんは何もしない）
+  Future<void> settle() async {}
 }
 
 // ───────────── 黄金角の種の並び ─────────────
@@ -90,6 +94,24 @@ abstract class PixelPattern extends CpuPattern {
       _image = img;
       _decoding = false;
     });
+  }
+
+  @override
+  Future<void> settle() async {
+    final px = pixels;
+    if (px == null) return;
+    var waits = 0;
+    while (_decoding && waits < 200) {
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      waits++;
+    }
+    final done = Completer<ui.Image>();
+    _decoding = true;
+    ui.decodeImageFromPixels(Uint8List.fromList(px), pw, ph, ui.PixelFormat.rgba8888, done.complete);
+    final img = await done.future;
+    _image?.dispose();
+    _image = img;
+    _decoding = false;
   }
 
   bool needsInit(Size size, int height) {

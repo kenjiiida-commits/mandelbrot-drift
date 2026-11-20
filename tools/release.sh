@@ -17,8 +17,10 @@ if gh release view "v$VER" >/dev/null 2>&1; then
 fi
 
 echo "== 1/6 版の番号を $VER にしています"
-BUILD=$(grep '^version:' pubspec.yaml | sed 's/.*+//')
-BUILD=$((BUILD + 1))
+# スマホが「新しい版」と分かるように、通し番号は日時から作る（前より必ず大きくなる）
+OLD=$(grep '^version:' pubspec.yaml | sed 's/.*+//')
+BUILD=$((10#$(date +%y%j%H)))
+if [ "$BUILD" -le "$OLD" ]; then BUILD=$((OLD + 1)); fi
 sed -i "s/^version: .*/version: $VER+$BUILD/" pubspec.yaml
 sed -i "s/^Version: .*/Version: $VER/" packaging/deb/DEBIAN/control
 
